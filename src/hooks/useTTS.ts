@@ -195,29 +195,38 @@ export function useTTS(document: StoredDocument | null) {
     const engine = kokoroRef.current;
     if (!engine) return;
 
-    // Load model if not ready (speak() also loads, but doing it here gives better UX feedback)
+    // Load model if not ready
     if (!engine.isReady()) {
       try {
         await engine.load();
-      } catch {
+      } catch (e) {
+        console.error('[useTTS] Kokoro load failed:', e);
         setIsPlaying(false);
         return;
       }
     }
 
+    // Bail if aborted during load
+    if (abortSignal.aborted) return;
+
     const voiceId = kokoroVoiceId(selectedVoiceId);
     engine.setVoice(voiceId);
 
     let index = startIndex;
-    // Sequential loop — runs until abort or no more chunks
     while (!abortSignal.aborted) {
-      // Read chunks from the ref-stable chunks array via functional update trick
-      // We capture chunks length via closure — this is safe since chunks only change on doc load
       if (index >= chunks.length) break;
 
       setCurrentChunkIndex(index);
 
-      await engine.speak(chunks[index].text, currentRate);
+      try {
+        await engine.speak(chunks[index].text, currentRate);
+      } catch (e) {
+        // speak() throws on real errors — stop the loop and surface the problem
+        console.error(`[useTTS] Kokoro speak error on chunk ${index}:`, e);
+        setIsPlaying(false);
+        setIsPaused(false);
+        return;
+      }
 
       if (abortSignal.aborted) break;
 

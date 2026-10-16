@@ -1,8 +1,7 @@
 import { KokoroTTS } from 'kokoro-js';
 
-// Kokoro pt-BR voices
 export interface KokoroVoiceOption {
-  id: string;       // e.g. "pf_dora"
+  id: string;
   label: string;
   gender: 'female' | 'male';
 }
@@ -15,16 +14,22 @@ export const KOKORO_BR_VOICES: KokoroVoiceOption[] = [
 
 export type KokoroStatus = 'idle' | 'loading' | 'ready' | 'error';
 
+// Shape returned by kokoro-js generate()
+interface KokoroAudio {
+  audio: Float32Array;
+  sampling_rate: number;
+}
+
 export class KokoroEngine {
   private tts: KokoroTTS | null = null;
   private status: KokoroStatus = 'idle';
   private currentVoice: string = 'pf_dora';
   private audioCtx: AudioContext | null = null;
   private currentSource: AudioBufferSourceNode | null = null;
-  // Tracks the resolve fn of the current speak() promise so stop() can unblock it
+  // Resolve fn of the current speak() promise — called by stopAudio() to unblock
   private speakResolve: (() => void) | null = null;
   private onStatusChange?: (s: KokoroStatus) => void;
-  // loadPromise lets multiple callers await the same in-flight load
+  // Shared promise so multiple callers await the same download
   private loadPromise: Promise<void> | null = null;
 
   constructor(onStatusChange?: (s: KokoroStatus) => void) {
@@ -44,7 +49,7 @@ export class KokoroEngine {
     this.currentVoice = voiceId;
   }
 
-  /** Load the ONNX model. Safe to call multiple times — returns the same promise if already loading. */
+  /** Load the ONNX model. Returns the same Promise if already loading. */
   public load(): Promise<void> {
     if (this.tts) return Promise.resolve();
     if (this.loadPromise) return this.loadPromise;
@@ -57,7 +62,7 @@ export class KokoroEngine {
       this.tts = model;
       this.setStatus('ready');
     }).catch((e) => {
-      console.error('Kokoro load error:', e);
+      console.error('[KokoroEngine] load error:', e);
       this.setStatus('error');
       this.loadPromise = null; // allow retry
       throw e;
@@ -67,71 +72,65 @@ export class KokoroEngine {
   }
 
   /**
-   * Generate and play a text chunk. Returns a Promise that resolves when the
-   * audio finishes playing (or immediately if stopped/aborted).
+   * Generate and play one text chunk.
+   * Returns a Promise that resolves when the audio finishes (or is stopped).
+   * Throws on generation/playback errors so the caller can break the loop.
    */
   public async speak(text: string, rate: number = 1.0): Promise<void> {
-    // Ensure model is loaded
-    if (!this.tts) {
-      await this.load();
-    }
-    if (!this.tts) return;
+    if (!this.tts) await this.load();
+    if (!this.tts) throw new Error('[KokoroEngine] model not loaded');
 
-    // Stop any current playback before starting new
+    // Stop any currently playing audio and unblock previous speak() promise
     this.stopAudio();
 
+    // Ensure AudioContext exists and is running
     if (!this.audioCtx || this.audioCtx.state === 'closed') {
       this.audioCtx = new AudioContext();
     }
-    // Resume suspended context (needed on some browsers after user gesture)
     if (this.audioCtx.state === 'suspended') {
       await this.audioCtx.resume();
     }
 
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const audio = await (this.tts as any).generate(text, { voice: this.currentVoice });
+    // Generate audio from the model
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (this.tts as any).generate(text, { voice: this.currentVoice }) as KokoroAudio;
 
-      const wavUint8: Uint8Array = audio.toWav();
-      const arrayBuffer = wavUint8.buffer.slice(
-        wavUint8.byteOffset,
-        wavUint8.byteOffset + wavUint8.byteLength,
-      ) as ArrayBuffer;
-
-      const decoded = await this.audioCtx.decodeAudioData(arrayBuffer);
-
-      // Return a promise that resolves only when audio FINISHES playing
-      await new Promise<void>((resolve) => {
-        this.speakResolve = resolve;
-
-        const source = this.audioCtx!.createBufferSource();
-        source.buffer = decoded;
-        source.playbackRate.value = rate;
-        source.connect(this.audioCtx!.destination);
-        this.currentSource = source;
-
-        source.onended = () => {
-          this.currentSource = null;
-          this.speakResolve = null;
-          resolve();
-        };
-
-        source.start(0);
-      });
-    } catch (e: unknown) {
-      if (e instanceof Error && e.name !== 'AbortError') {
-        console.error('Kokoro speak error:', e);
-      }
+    if (!result || !result.audio || !result.sampling_rate) {
+      throw new Error('[KokoroEngine] generate() returned unexpected shape');
     }
+
+    const { audio, sampling_rate } = result;
+
+    // Build an AudioBuffer directly from the Float32Array — no WAV encoding needed
+    const audioBuffer = this.audioCtx.createBuffer(1, audio.length, sampling_rate);
+    audioBuffer.copyToChannel(audio as Float32Array<ArrayBuffer>, 0);
+
+    // Return a Promise that resolves only when the audio finishes playing
+    return new Promise<void>((resolve) => {
+      this.speakResolve = resolve;
+
+      const source = this.audioCtx!.createBufferSource();
+      source.buffer = audioBuffer;
+      source.playbackRate.value = rate;
+      source.connect(this.audioCtx!.destination);
+      this.currentSource = source;
+
+      source.onended = () => {
+        this.currentSource = null;
+        this.speakResolve = null;
+        resolve();
+      };
+
+      source.start(0);
+    });
   }
 
-  /** Stop current audio and unblock any pending speak() promise. */
   private stopAudio(): void {
     if (this.currentSource) {
       try { this.currentSource.stop(); } catch (_) { /* already stopped */ }
       this.currentSource = null;
     }
-    // Unblock the awaiting speak() promise
+    // Unblock any awaiting speak() promise so the loop can exit cleanly
     if (this.speakResolve) {
       this.speakResolve();
       this.speakResolve = null;
