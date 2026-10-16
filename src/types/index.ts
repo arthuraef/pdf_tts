@@ -27,3 +27,12 @@ export interface TextChunk {
   chunkIndex: number;
   text: string;
 }
+
+/** Unified voice option (either browser native or Kokoro AI) */
+export interface VoiceOption {
+  id: string;           // unique: voiceURI for native, "kokoro:pf_dora" etc for AI
+  label: string;        // displayed in dropdown
+  engine: 'native' | 'kokoro';
+  nativeVoice?: SpeechSynthesisVoice;  // only for native
+  kokoroVoiceId?: string;              // only for kokoro
+}

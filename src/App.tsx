@@ -30,8 +30,9 @@ export function App() {
     totalChunks,
     currentPage,
     currentChunkText,
-    availableVoices,
-    selectedVoiceURI,
+    voiceOptions,
+    selectedVoiceId,
+    kokoroStatus,
     play,
     pause,
     resume,
@@ -141,9 +142,10 @@ export function App() {
               onSkipForward={skipForward}
               rate={rate}
               onRateChange={setRate}
-              voices={availableVoices}
-              selectedVoiceURI={selectedVoiceURI}
+              voices={voiceOptions}
+              selectedVoiceId={selectedVoiceId}
               onVoiceChange={setVoice}
+              kokoroStatus={kokoroStatus}
               disabled={totalChunks === 0}
             />
           </div>
