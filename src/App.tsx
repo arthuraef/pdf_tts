@@ -5,6 +5,7 @@ import { PlayerControls } from './components/PlayerControls';
 import { ProgressBar } from './components/ProgressBar';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { useTTS } from './hooks/useTTS';
+import { useMediaSession } from './hooks/useMediaSession';
 import { getActiveDocument, clearActiveDocument } from './storage/db';
 import type { StoredDocument } from './types';
 
@@ -42,6 +43,22 @@ export function App() {
     setRate,
     setVoice,
   } = useTTS(activeDoc);
+
+  // Sync background playback and lockscreen media controls
+  useMediaSession({
+    document: activeDoc,
+    currentPage,
+    currentChunkIndex,
+    totalChunks,
+    isPlaying,
+    isPaused,
+    rate,
+    play,
+    pause,
+    resume,
+    skipBackward,
+    skipForward,
+  });
 
   const handleDocumentLoaded = (doc: StoredDocument) => {
     setActiveDoc(doc);
