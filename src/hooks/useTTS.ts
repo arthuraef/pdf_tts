@@ -134,16 +134,8 @@ export function useTTS(document: StoredDocument | null) {
       setSelectedVoiceId(kokoroOnly[0]?.id || '');
     }
 
-    // Kokoro engine
-    kokoroRef.current = new KokoroEngine(
-      (s) => setKokoroStatus(s),
-      () => {
-        // When a Kokoro chunk ends, advance to next
-        if (nativeRef.current) return; // handled by native
-        setCurrentChunkIndex((prev) => prev + 1);
-        setIsPlaying(false);
-      }
-    );
+    // Kokoro engine — no onEnd needed: speak() is now a proper promise
+    kokoroRef.current = new KokoroEngine((s) => setKokoroStatus(s));
 
     return () => {
       nativeRef.current?.stop();
@@ -151,13 +143,7 @@ export function useTTS(document: StoredDocument | null) {
     };
   }, []);
 
-  // ---- Advance Kokoro chunks manually ---------------------------------
-  useEffect(() => {
-    if (!isKokoroId(selectedVoiceId)) return;
-    if (!isPlaying) return;
-    // Kokoro onEnd triggers setIsPlaying(false) which triggers the next chunk play
-    // so we re-invoke play here if still meant to be playing
-  }, [currentChunkIndex, isPlaying, selectedVoiceId]);
+
 
   // ---- Load document ---------------------------------------------------
   useEffect(() => {
@@ -197,48 +183,79 @@ export function useTTS(document: StoredDocument | null) {
     }
   }, [document?.id, currentChunkIndex, rate, chunks]);
 
+  // Ref used to abort the Kokoro chunk loop when the user stops/pauses
+  const kokoroAbortRef = useRef<{ aborted: boolean }>({ aborted: false });
+
   // ---- Kokoro sequential chunk player ---------------------------------
-  const kokoroPlayChunk = useCallback(async (index: number, currentRate: number) => {
-    if (!kokoroRef.current || index >= chunks.length) {
-      setIsPlaying(false);
-      return;
-    }
+  const kokoroPlayChunk = useCallback(async (
+    startIndex: number,
+    currentRate: number,
+    abortSignal: { aborted: boolean },
+  ) => {
     const engine = kokoroRef.current;
+    if (!engine) return;
+
+    // Load model if not ready (speak() also loads, but doing it here gives better UX feedback)
     if (!engine.isReady()) {
-      await engine.load();
+      try {
+        await engine.load();
+      } catch {
+        setIsPlaying(false);
+        return;
+      }
     }
+
     const voiceId = kokoroVoiceId(selectedVoiceId);
     engine.setVoice(voiceId);
 
-    setCurrentChunkIndex(index);
-    setIsPlaying(true);
+    let index = startIndex;
+    // Sequential loop — runs until abort or no more chunks
+    while (!abortSignal.aborted) {
+      // Read chunks from the ref-stable chunks array via functional update trick
+      // We capture chunks length via closure — this is safe since chunks only change on doc load
+      if (index >= chunks.length) break;
 
-    await engine.speak(chunks[index].text, currentRate);
+      setCurrentChunkIndex(index);
 
-    // onEnd callback in KokoroEngine fires → we advance here
-    setCurrentChunkIndex((prev) => {
-      const next = prev + 1;
-      if (next < chunks.length) {
-        kokoroPlayChunk(next, currentRate);
-      } else {
-        setIsPlaying(false);
-        setIsPaused(false);
-      }
-      return next < chunks.length ? next : prev;
-    });
+      await engine.speak(chunks[index].text, currentRate);
+
+      if (abortSignal.aborted) break;
+
+      index += 1;
+    }
+
+    if (!abortSignal.aborted) {
+      // Reached end of document naturally
+      setIsPlaying(false);
+      setIsPaused(false);
+    }
   }, [chunks, selectedVoiceId]);
 
+
   // ---- Public controls ------------------------------------------------
+
+  /** Abort any running Kokoro loop and start a new one from `index`. */
+  const startKokoro = useCallback((index: number, currentRate: number) => {
+    kokoroAbortRef.current.aborted = true;          // abort old loop
+    kokoroRef.current?.stop();                       // stop audio
+    const signal = { aborted: false };
+    kokoroAbortRef.current = signal;
+    setIsPlaying(true);
+    setIsPaused(false);
+    kokoroPlayChunk(index, currentRate, signal);
+  }, [kokoroPlayChunk]);
+
   const handlePlay = useCallback(() => {
     if (isKokoroId(selectedVoiceId)) {
-      kokoroPlayChunk(currentChunkIndex, rate);
+      startKokoro(currentChunkIndex, rate);
     } else {
       nativeRef.current?.play();
     }
-  }, [selectedVoiceId, currentChunkIndex, rate, kokoroPlayChunk]);
+  }, [selectedVoiceId, currentChunkIndex, rate, startKokoro]);
 
   const handlePause = useCallback(() => {
     if (isKokoroId(selectedVoiceId)) {
+      kokoroAbortRef.current.aborted = true;
       kokoroRef.current?.stop();
       setIsPlaying(false);
       setIsPaused(true);
@@ -249,33 +266,37 @@ export function useTTS(document: StoredDocument | null) {
 
   const handleResume = useCallback(() => {
     if (isKokoroId(selectedVoiceId)) {
-      kokoroPlayChunk(currentChunkIndex, rate);
+      startKokoro(currentChunkIndex, rate);
     } else {
       nativeRef.current?.resume();
     }
-  }, [selectedVoiceId, currentChunkIndex, rate, kokoroPlayChunk]);
+  }, [selectedVoiceId, currentChunkIndex, rate, startKokoro]);
 
   const handleSkipBackward = useCallback(() => {
     if (isKokoroId(selectedVoiceId)) {
       const next = Math.max(0, currentChunkIndex - 2);
-      kokoroRef.current?.stop();
-      setCurrentChunkIndex(next);
-      if (isPlaying) kokoroPlayChunk(next, rate);
+      if (isPlaying) {
+        startKokoro(next, rate);
+      } else {
+        setCurrentChunkIndex(next);
+      }
     } else {
       nativeRef.current?.skip(-10);
     }
-  }, [selectedVoiceId, currentChunkIndex, isPlaying, rate, kokoroPlayChunk]);
+  }, [selectedVoiceId, currentChunkIndex, isPlaying, rate, startKokoro]);
 
   const handleSkipForward = useCallback(() => {
     if (isKokoroId(selectedVoiceId)) {
       const next = Math.min(chunks.length - 1, currentChunkIndex + 2);
-      kokoroRef.current?.stop();
-      setCurrentChunkIndex(next);
-      if (isPlaying) kokoroPlayChunk(next, rate);
+      if (isPlaying) {
+        startKokoro(next, rate);
+      } else {
+        setCurrentChunkIndex(next);
+      }
     } else {
       nativeRef.current?.skip(10);
     }
-  }, [selectedVoiceId, currentChunkIndex, isPlaying, rate, chunks.length, kokoroPlayChunk]);
+  }, [selectedVoiceId, currentChunkIndex, isPlaying, rate, chunks.length, startKokoro]);
 
   const handleRateChange = useCallback((newRate: number) => {
     setRate(newRate);
@@ -284,6 +305,7 @@ export function useTTS(document: StoredDocument | null) {
 
   const handleVoiceChange = useCallback((voiceId: string) => {
     // Stop whatever is playing
+    kokoroAbortRef.current.aborted = true;
     nativeRef.current?.stop();
     kokoroRef.current?.stop();
     setIsPlaying(false);
