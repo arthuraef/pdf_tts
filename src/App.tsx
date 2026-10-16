@@ -40,6 +40,7 @@ export function App() {
     restart,
     skipBackward,
     skipForward,
+    goToPage,
     setRate,
     setVoice,
   } = useTTS(activeDoc);
@@ -147,6 +148,8 @@ export function App() {
               currentChunkIndex={currentChunkIndex}
               totalChunks={totalChunks}
               currentTextSnippet={currentChunkText}
+              onGoToPage={goToPage}
+              disabled={totalChunks === 0}
             />
 
             {/* Audio Controls (Play, Pause, Skip ±10s, Rate, Voice) */}

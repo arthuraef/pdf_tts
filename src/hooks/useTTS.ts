@@ -199,6 +199,46 @@ export function useTTS(document: StoredDocument | null) {
     nativeRef.current?.skip(10);
   }, []);
 
+  const handleJumpToPage = useCallback(
+    (targetPage1Based: number) => {
+      if (chunks.length === 0) return;
+      const targetPageIndex = Math.max(0, targetPage1Based - 1);
+
+      // Find the first chunk on this page
+      let targetChunkIndex = chunks.findIndex((c) => c.pageIndex === targetPageIndex);
+
+      // If page has no text, find next page with text
+      if (targetChunkIndex === -1) {
+        targetChunkIndex = chunks.findIndex((c) => c.pageIndex > targetPageIndex);
+      }
+
+      // If past end of text, clamp to last chunk
+      if (targetChunkIndex === -1) {
+        targetChunkIndex = chunks.length - 1;
+      }
+
+      const wasPlaying = isPlaying;
+      nativeRef.current?.stop();
+
+      setIsFinished(targetChunkIndex >= chunks.length - 1);
+      setCurrentChunkIndex(targetChunkIndex);
+
+      if (document?.id) {
+        const cur = chunks[targetChunkIndex];
+        savePlaybackProgress(document.id, cur?.pageIndex ?? 0, targetChunkIndex, rate);
+      }
+
+      nativeRef.current?.setChunks(chunks, targetChunkIndex);
+
+      if (wasPlaying) {
+        setIsPlaying(true);
+        setIsPaused(false);
+        nativeRef.current?.play();
+      }
+    },
+    [chunks, document?.id, rate, isPlaying]
+  );
+
   const handleRateChange = useCallback((newRate: number) => {
     const cleanRate = parseFloat(newRate.toFixed(2));
     setRate(cleanRate);
@@ -241,6 +281,7 @@ export function useTTS(document: StoredDocument | null) {
     restart: handleRestart,
     skipBackward: handleSkipBackward,
     skipForward: handleSkipForward,
+    goToPage: handleJumpToPage,
     setRate: handleRateChange,
     setVoice: handleVoiceChange,
   };
