@@ -5,6 +5,7 @@ export interface TTSEventCallbacks {
   onEnd?: () => void;
   onError?: (error: unknown) => void;
   onStateChange?: (isPlaying: boolean, isPaused: boolean) => void;
+  onVoicesLoaded?: (voices: SpeechSynthesisVoice[]) => void;
 }
 
 export class TTSEngine {
@@ -12,6 +13,7 @@ export class TTSEngine {
   private chunks: TextChunk[] = [];
   private currentIndex: number = 0;
   private playbackRate: number = 1.0;
+  private selectedVoiceURI: string | null = null;
   private isPlaying: boolean = false;
   private isPaused: boolean = false;
   private keepAliveTimer: number | null = null;
@@ -21,7 +23,77 @@ export class TTSEngine {
     this.callbacks = callbacks;
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       this.synth = window.speechSynthesis;
+      this.initVoices();
     }
+  }
+
+  private initVoices() {
+    if (!this.synth) return;
+
+    const handleVoices = () => {
+      const voices = this.getPortugueseVoices();
+      if (voices.length > 0 && !this.selectedVoiceURI) {
+        // Automatically select the best quality voice
+        this.selectedVoiceURI = voices[0].voiceURI;
+      }
+      this.callbacks.onVoicesLoaded?.(voices);
+    };
+
+    handleVoices();
+
+    if (typeof this.synth.onvoiceschanged !== 'undefined') {
+      this.synth.onvoiceschanged = handleVoices;
+    }
+  }
+
+  public getPortugueseVoices(): SpeechSynthesisVoice[] {
+    if (!this.synth) return [];
+    const all = this.synth.getVoices();
+
+    // Filter Portuguese voices
+    const ptVoices = all.filter((v) => {
+      const lang = v.lang.toLowerCase().replace('_', '-');
+      return lang.startsWith('pt');
+    });
+
+    // Score & sort voices so the most natural/human ones appear first
+    return ptVoices.sort((a, b) => {
+      const getScore = (v: SpeechSynthesisVoice) => {
+        let score = 0;
+        const name = v.name.toLowerCase();
+        const lang = v.lang.toLowerCase().replace('_', '-');
+
+        // Prefer pt-BR over pt-PT
+        if (lang === 'pt-br') score += 50;
+
+        // Microsoft Natural/Online voices (super high quality on Edge/Windows)
+        if (name.includes('natural') || name.includes('online')) score += 40;
+
+        // Google neural/online voices (Chrome/Android)
+        if (name.includes('google')) score += 30;
+
+        // Apple Enhanced / Siri / Premium voices (macOS / iOS)
+        if (name.includes('premium') || name.includes('enhanced') || name.includes('siri')) score += 35;
+
+        // Local service voices usually have lower quality than cloud neural
+        if (v.localService) score -= 5;
+
+        return score;
+      };
+
+      return getScore(b) - getScore(a);
+    });
+  }
+
+  public setVoice(voiceURI: string) {
+    this.selectedVoiceURI = voiceURI;
+    if (this.isPlaying && !this.isPaused) {
+      this.speakCurrentChunk();
+    }
+  }
+
+  public getSelectedVoiceURI(): string | null {
+    return this.selectedVoiceURI;
   }
 
   public setCallbacks(callbacks: TTSEventCallbacks) {
@@ -36,7 +108,6 @@ export class TTSEngine {
 
   public setRate(rate: number) {
     this.playbackRate = rate;
-    // If actively playing, resume speaking current chunk with new rate
     if (this.isPlaying && !this.isPaused) {
       this.speakCurrentChunk();
     }
@@ -104,14 +175,9 @@ export class TTSEngine {
     this.notifyState();
   }
 
-  /**
-   * Jump backwards by approx seconds.
-   * At average 15 chars/second at 1.0x rate, 10 seconds is approx 150 chars (around 1 chunk).
-   */
   public skip(seconds: number) {
     if (this.chunks.length === 0) return;
 
-    // Approximate chunks per 10s: ~1 to 2 chunks based on playback rate
     const chunksDelta = Math.round((seconds * this.playbackRate) / 6);
     const targetDelta = chunksDelta === 0 ? (seconds > 0 ? 1 : -1) : chunksDelta;
     const nextIndex = Math.max(0, Math.min(this.chunks.length - 1, this.currentIndex + targetDelta));
@@ -139,11 +205,22 @@ export class TTSEngine {
     const utterance = new SpeechSynthesisUtterance(chunk.text);
     utterance.rate = this.playbackRate;
 
-    // Auto-detect Portuguese or system default
-    const voices = this.synth.getVoices();
-    const ptVoice = voices.find((v) => v.lang.startsWith('pt'));
-    if (ptVoice) {
-      utterance.voice = ptVoice;
+    // Pick selected voice or top ranked PT voice
+    const ptVoices = this.getPortugueseVoices();
+    let chosenVoice: SpeechSynthesisVoice | undefined;
+
+    if (this.selectedVoiceURI) {
+      chosenVoice = ptVoices.find((v) => v.voiceURI === this.selectedVoiceURI);
+    }
+
+    if (!chosenVoice && ptVoices.length > 0) {
+      chosenVoice = ptVoices[0];
+      this.selectedVoiceURI = chosenVoice.voiceURI;
+    }
+
+    if (chosenVoice) {
+      utterance.voice = chosenVoice;
+      utterance.lang = chosenVoice.lang;
     }
 
     utterance.onstart = () => {
@@ -174,7 +251,6 @@ export class TTSEngine {
 
   private startKeepAlive() {
     this.clearKeepAlive();
-    // Chrome bugfix: pause/resume every 10s prevents speech synthesis stalling
     this.keepAliveTimer = window.setInterval(() => {
       if (this.synth && this.isPlaying && !this.isPaused && !this.synth.paused) {
         this.synth.pause();

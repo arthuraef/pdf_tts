@@ -30,12 +30,15 @@ export function App() {
     totalChunks,
     currentPage,
     currentChunkText,
+    availableVoices,
+    selectedVoiceURI,
     play,
     pause,
     resume,
     skipBackward,
     skipForward,
     setRate,
+    setVoice,
   } = useTTS(activeDoc);
 
   const handleDocumentLoaded = (doc: StoredDocument) => {
@@ -127,7 +130,7 @@ export function App() {
               currentTextSnippet={currentChunkText}
             />
 
-            {/* Audio Controls (Play, Pause, Skip ±10s, Rate) */}
+            {/* Audio Controls (Play, Pause, Skip ±10s, Rate, Voice) */}
             <PlayerControls
               isPlaying={isPlaying}
               isPaused={isPaused}
@@ -138,6 +141,9 @@ export function App() {
               onSkipForward={skipForward}
               rate={rate}
               onRateChange={setRate}
+              voices={availableVoices}
+              selectedVoiceURI={selectedVoiceURI}
+              onVoiceChange={setVoice}
               disabled={totalChunks === 0}
             />
           </div>

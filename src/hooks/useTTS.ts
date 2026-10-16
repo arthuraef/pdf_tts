@@ -10,6 +10,8 @@ export function useTTS(document: StoredDocument | null) {
   const [rate, setRate] = useState(1.0);
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
   const [chunks, setChunks] = useState<TextChunk[]>([]);
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [selectedVoiceURI, setSelectedVoiceURI] = useState<string>('');
   const ttsRef = useRef<TTSEngine | null>(null);
 
   // Initialize engine once
@@ -26,7 +28,20 @@ export function useTTS(document: StoredDocument | null) {
         setIsPlaying(false);
         setIsPaused(false);
       },
+      onVoicesLoaded: (voices) => {
+        setAvailableVoices(voices);
+        const top = voices[0]?.voiceURI;
+        if (top) {
+          setSelectedVoiceURI((prev) => prev || top);
+        }
+      },
     });
+
+    const initialVoices = ttsRef.current.getPortugueseVoices();
+    if (initialVoices.length > 0) {
+      setAvailableVoices(initialVoices);
+      setSelectedVoiceURI(initialVoices[0].voiceURI);
+    }
 
     return () => {
       ttsRef.current?.stop();
@@ -98,6 +113,11 @@ export function useTTS(document: StoredDocument | null) {
     ttsRef.current?.setRate(newRate);
   }, []);
 
+  const handleVoiceChange = useCallback((voiceURI: string) => {
+    setSelectedVoiceURI(voiceURI);
+    ttsRef.current?.setVoice(voiceURI);
+  }, []);
+
   const currentChunk = chunks[currentChunkIndex];
   const currentPage = currentChunk ? currentChunk.pageIndex + 1 : 1;
 
@@ -109,11 +129,14 @@ export function useTTS(document: StoredDocument | null) {
     totalChunks: chunks.length,
     currentPage,
     currentChunkText: currentChunk?.text || '',
+    availableVoices,
+    selectedVoiceURI,
     play: handlePlay,
     pause: handlePause,
     resume: handleResume,
     skipBackward: handleSkipBackward,
     skipForward: handleSkipForward,
     setRate: handleRateChange,
+    setVoice: handleVoiceChange,
   };
 }
