@@ -1,5 +1,14 @@
 import { KokoroTTS } from 'kokoro-js';
 
+// Patch prototype immediately so any KokoroTTS instance allows all voices (including pf_dora, pm_alex, pm_santa)
+try {
+  (KokoroTTS as unknown as { prototype: { _validate_voice: (v: string) => string } }).prototype._validate_voice = function (voice: string) {
+    return voice ? voice.charAt(0) : 'a';
+  };
+} catch (err) {
+  console.warn('[KokoroEngine] Failed to patch prototype._validate_voice:', err);
+}
+
 export interface KokoroVoiceOption {
   id: string;
   label: string;
@@ -14,7 +23,6 @@ export const KOKORO_BR_VOICES: KokoroVoiceOption[] = [
 
 export type KokoroStatus = 'idle' | 'loading' | 'ready' | 'error';
 
-// Shape returned by kokoro-js generate()
 interface KokoroAudio {
   audio: Float32Array;
   sampling_rate: number;
@@ -26,10 +34,8 @@ export class KokoroEngine {
   private currentVoice: string = 'pf_dora';
   private audioCtx: AudioContext | null = null;
   private currentSource: AudioBufferSourceNode | null = null;
-  // Resolve fn of the current speak() promise — called by stopAudio() to unblock
   private speakResolve: (() => void) | null = null;
   private onStatusChange?: (s: KokoroStatus) => void;
-  // Shared promise so multiple callers await the same download
   private loadPromise: Promise<void> | null = null;
 
   constructor(onStatusChange?: (s: KokoroStatus) => void) {
@@ -49,6 +55,26 @@ export class KokoroEngine {
     this.currentVoice = voiceId;
   }
 
+  /**
+   * Initializes / resumes AudioContext synchronously during a user click.
+   * This is essential to prevent browser autoplay policies from blocking audio.
+   */
+  public initAudio(): void {
+    try {
+      if (!this.audioCtx || this.audioCtx.state === 'closed') {
+        const AudioCtxClass =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        this.audioCtx = new AudioCtxClass();
+      }
+      if (this.audioCtx.state === 'suspended') {
+        this.audioCtx.resume().catch(console.error);
+      }
+    } catch (e) {
+      console.warn('[KokoroEngine] initAudio warning:', e);
+    }
+  }
+
   /** Load the ONNX model. Returns the same Promise if already loading. */
   public load(): Promise<void> {
     if (this.tts) return Promise.resolve();
@@ -58,60 +84,73 @@ export class KokoroEngine {
     this.loadPromise = KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX', {
       dtype: 'q8',
       device: 'wasm',
-    }).then((model) => {
-      this.tts = model;
-      this.setStatus('ready');
-    }).catch((e) => {
-      console.error('[KokoroEngine] load error:', e);
-      this.setStatus('error');
-      this.loadPromise = null; // allow retry
-      throw e;
-    });
+    })
+      .then((model) => {
+        this.tts = model;
+        // Also override instance method to guarantee pt-BR voices are accepted
+        (this.tts as unknown as { _validate_voice: (v: string) => string })._validate_voice = (voice: string) => {
+          return voice ? voice.charAt(0) : 'a';
+        };
+        this.setStatus('ready');
+      })
+      .catch((e) => {
+        console.error('[KokoroEngine] load error:', e);
+        this.setStatus('error');
+        this.loadPromise = null;
+        throw e;
+      });
 
     return this.loadPromise;
   }
 
   /**
    * Generate and play one text chunk.
-   * Returns a Promise that resolves when the audio finishes (or is stopped).
-   * Throws on generation/playback errors so the caller can break the loop.
+   * Resolves only when the audio finishes playing, or when stopped.
    */
   public async speak(text: string, rate: number = 1.0): Promise<void> {
-    if (!this.tts) await this.load();
-    if (!this.tts) throw new Error('[KokoroEngine] model not loaded');
+    const cleanText = text?.trim();
+    if (!cleanText) return;
 
-    // Stop any currently playing audio and unblock previous speak() promise
+    if (!this.tts) await this.load();
+    if (!this.tts) throw new Error('[KokoroEngine] Model not loaded');
+
+    // Stop previous audio and unblock previous speak() promise
     this.stopAudio();
 
-    // Ensure AudioContext exists and is running
-    if (!this.audioCtx || this.audioCtx.state === 'closed') {
-      this.audioCtx = new AudioContext();
-    }
-    if (this.audioCtx.state === 'suspended') {
+    // Ensure AudioContext is ready
+    this.initAudio();
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
       await this.audioCtx.resume();
     }
 
-    // Generate audio from the model
+    // Pass neural speed directly to generate() for natural pitch
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await (this.tts as any).generate(text, { voice: this.currentVoice }) as KokoroAudio;
+    const result = (await (this.tts as any).generate(cleanText, {
+      voice: this.currentVoice,
+      speed: rate,
+    })) as KokoroAudio;
 
     if (!result || !result.audio || !result.sampling_rate) {
-      throw new Error('[KokoroEngine] generate() returned unexpected shape');
+      throw new Error('[KokoroEngine] generate() returned invalid audio output');
     }
 
     const { audio, sampling_rate } = result;
 
-    // Build an AudioBuffer directly from the Float32Array — no WAV encoding needed
-    const audioBuffer = this.audioCtx.createBuffer(1, audio.length, sampling_rate);
-    audioBuffer.copyToChannel(audio as Float32Array<ArrayBuffer>, 0);
+    if (!this.audioCtx) {
+      this.initAudio();
+    }
+    if (!this.audioCtx) throw new Error('[KokoroEngine] AudioContext unavailable');
 
-    // Return a Promise that resolves only when the audio finishes playing
+    // Create AudioBuffer from raw samples
+    const audioBuffer = this.audioCtx.createBuffer(1, audio.length, sampling_rate);
+    audioBuffer.getChannelData(0).set(audio);
+
     return new Promise<void>((resolve) => {
       this.speakResolve = resolve;
 
       const source = this.audioCtx!.createBufferSource();
       source.buffer = audioBuffer;
-      source.playbackRate.value = rate;
+      source.playbackRate.value = 1.0; // speed already baked into waveform
       source.connect(this.audioCtx!.destination);
       this.currentSource = source;
 
@@ -127,10 +166,13 @@ export class KokoroEngine {
 
   private stopAudio(): void {
     if (this.currentSource) {
-      try { this.currentSource.stop(); } catch (_) { /* already stopped */ }
+      try {
+        this.currentSource.stop();
+      } catch (_) {
+        /* ignore */
+      }
       this.currentSource = null;
     }
-    // Unblock any awaiting speak() promise so the loop can exit cleanly
     if (this.speakResolve) {
       this.speakResolve();
       this.speakResolve = null;

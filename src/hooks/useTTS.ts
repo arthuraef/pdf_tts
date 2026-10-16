@@ -84,6 +84,7 @@ function buildVoiceList(rawVoices: SpeechSynthesisVoice[]): VoiceOption[] {
 export function useTTS(document: StoredDocument | null) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [isFinished, setIsFinished] = useState(false);
   const [rate, setRate] = useState(1.0);
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
   const [chunks, setChunks] = useState<TextChunk[]>([]);
@@ -99,12 +100,16 @@ export function useTTS(document: StoredDocument | null) {
     const handleEnd = () => {
       setIsPlaying(false);
       setIsPaused(false);
+      setIsFinished(true);
     };
 
     // Native TTS engine
     nativeRef.current = new TTSEngine({
       onChunkStart: (index) => setCurrentChunkIndex(index),
-      onStateChange: (playing, paused) => { setIsPlaying(playing); setIsPaused(paused); },
+      onStateChange: (playing, paused) => {
+        setIsPlaying(playing);
+        setIsPaused(paused);
+      },
       onEnd: handleEnd,
       onVoicesLoaded: (rawVoices) => {
         const list = buildVoiceList(rawVoices);
@@ -134,7 +139,7 @@ export function useTTS(document: StoredDocument | null) {
       setSelectedVoiceId(kokoroOnly[0]?.id || '');
     }
 
-    // Kokoro engine — no onEnd needed: speak() is now a proper promise
+    // Kokoro engine
     kokoroRef.current = new KokoroEngine((s) => setKokoroStatus(s));
 
     return () => {
@@ -143,13 +148,12 @@ export function useTTS(document: StoredDocument | null) {
     };
   }, []);
 
-
-
   // ---- Load document ---------------------------------------------------
   useEffect(() => {
     if (!document) {
       setChunks([]);
       setCurrentChunkIndex(0);
+      setIsFinished(false);
       nativeRef.current?.stop();
       kokoroRef.current?.stop();
       return;
@@ -163,13 +167,20 @@ export function useTTS(document: StoredDocument | null) {
       getPlaybackProgress(document.id).then((saved) => {
         if (saved) {
           const idx = Math.min(saved.chunkIndex, docChunks.length - 1);
-          const r = saved.playbackRate || 1.0;
-          setCurrentChunkIndex(idx >= 0 ? idx : 0);
+          const r = [1.0, 1.5, 2.0].includes(saved.playbackRate) ? saved.playbackRate : 1.0;
+          const safeIdx = idx >= 0 ? idx : 0;
+          setCurrentChunkIndex(safeIdx);
           setRate(r);
           nativeRef.current?.setRate(r);
-          nativeRef.current?.setChunks(docChunks, idx >= 0 ? idx : 0);
+          nativeRef.current?.setChunks(docChunks, safeIdx);
+          if (docChunks.length > 0 && safeIdx >= docChunks.length - 1) {
+            setIsFinished(true);
+          } else {
+            setIsFinished(false);
+          }
         } else {
           nativeRef.current?.setChunks(docChunks, 0);
+          setIsFinished(false);
         }
       });
     }
@@ -221,7 +232,6 @@ export function useTTS(document: StoredDocument | null) {
       try {
         await engine.speak(chunks[index].text, currentRate);
       } catch (e) {
-        // speak() throws on real errors — stop the loop and surface the problem
         console.error(`[useTTS] Kokoro speak error on chunk ${index}:`, e);
         setIsPlaying(false);
         setIsPaused(false);
@@ -233,29 +243,32 @@ export function useTTS(document: StoredDocument | null) {
       index += 1;
     }
 
-    if (!abortSignal.aborted) {
+    if (!abortSignal.aborted && index >= chunks.length) {
       // Reached end of document naturally
       setIsPlaying(false);
       setIsPaused(false);
+      setIsFinished(true);
     }
   }, [chunks, selectedVoiceId]);
-
 
   // ---- Public controls ------------------------------------------------
 
   /** Abort any running Kokoro loop and start a new one from `index`. */
   const startKokoro = useCallback((index: number, currentRate: number) => {
-    kokoroAbortRef.current.aborted = true;          // abort old loop
-    kokoroRef.current?.stop();                       // stop audio
+    kokoroAbortRef.current.aborted = true; // abort old loop
+    kokoroRef.current?.stop(); // stop audio
     const signal = { aborted: false };
     kokoroAbortRef.current = signal;
     setIsPlaying(true);
     setIsPaused(false);
+    setIsFinished(false);
     kokoroPlayChunk(index, currentRate, signal);
   }, [kokoroPlayChunk]);
 
   const handlePlay = useCallback(() => {
+    setIsFinished(false);
     if (isKokoroId(selectedVoiceId)) {
+      kokoroRef.current?.initAudio();
       startKokoro(currentChunkIndex, rate);
     } else {
       nativeRef.current?.play();
@@ -274,14 +287,38 @@ export function useTTS(document: StoredDocument | null) {
   }, [selectedVoiceId]);
 
   const handleResume = useCallback(() => {
+    setIsFinished(false);
     if (isKokoroId(selectedVoiceId)) {
+      kokoroRef.current?.initAudio();
       startKokoro(currentChunkIndex, rate);
     } else {
       nativeRef.current?.resume();
     }
   }, [selectedVoiceId, currentChunkIndex, rate, startKokoro]);
 
+  const handleRestart = useCallback(() => {
+    kokoroAbortRef.current.aborted = true;
+    nativeRef.current?.stop();
+    kokoroRef.current?.stop();
+    setCurrentChunkIndex(0);
+    setIsFinished(false);
+    setIsPaused(false);
+
+    if (document?.id) {
+      savePlaybackProgress(document.id, 0, 0, rate);
+    }
+
+    if (isKokoroId(selectedVoiceId)) {
+      kokoroRef.current?.initAudio();
+      startKokoro(0, rate);
+    } else {
+      nativeRef.current?.setChunks(chunks, 0);
+      nativeRef.current?.play();
+    }
+  }, [document?.id, rate, selectedVoiceId, chunks, startKokoro]);
+
   const handleSkipBackward = useCallback(() => {
+    setIsFinished(false);
     if (isKokoroId(selectedVoiceId)) {
       const next = Math.max(0, currentChunkIndex - 2);
       if (isPlaying) {
@@ -297,6 +334,11 @@ export function useTTS(document: StoredDocument | null) {
   const handleSkipForward = useCallback(() => {
     if (isKokoroId(selectedVoiceId)) {
       const next = Math.min(chunks.length - 1, currentChunkIndex + 2);
+      if (next >= chunks.length - 1) {
+        setIsFinished(true);
+      } else {
+        setIsFinished(false);
+      }
       if (isPlaying) {
         startKokoro(next, rate);
       } else {
@@ -340,6 +382,7 @@ export function useTTS(document: StoredDocument | null) {
   return {
     isPlaying,
     isPaused,
+    isFinished,
     rate,
     currentChunkIndex,
     totalChunks: chunks.length,
@@ -351,6 +394,7 @@ export function useTTS(document: StoredDocument | null) {
     play: handlePlay,
     pause: handlePause,
     resume: handleResume,
+    restart: handleRestart,
     skipBackward: handleSkipBackward,
     skipForward: handleSkipForward,
     setRate: handleRateChange,

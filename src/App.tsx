@@ -25,6 +25,7 @@ export function App() {
   const {
     isPlaying,
     isPaused,
+    isFinished,
     rate,
     currentChunkIndex,
     totalChunks,
@@ -36,6 +37,7 @@ export function App() {
     play,
     pause,
     resume,
+    restart,
     skipBackward,
     skipForward,
     setRate,
@@ -135,9 +137,11 @@ export function App() {
             <PlayerControls
               isPlaying={isPlaying}
               isPaused={isPaused}
+              isFinished={isFinished}
               onPlay={play}
               onPause={pause}
               onResume={resume}
+              onRestart={restart}
               onSkipBackward={skipBackward}
               onSkipForward={skipForward}
               rate={rate}
