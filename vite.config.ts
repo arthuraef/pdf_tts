@@ -11,10 +11,6 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
-      workbox: {
-        // ONNX runtime WASM is ~21 MB; raise limit to 30 MB
-        maximumFileSizeToCacheInBytes: 30 * 1024 * 1024,
-      },
       manifest: {
         name: 'PDF Voice - Leitor em Voz Alta',
         short_name: 'PDF Voice',

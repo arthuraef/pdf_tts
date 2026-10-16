@@ -33,7 +33,6 @@ export function App() {
     currentChunkText,
     voiceOptions,
     selectedVoiceId,
-    kokoroStatus,
     play,
     pause,
     resume,
@@ -149,7 +148,6 @@ export function App() {
               voices={voiceOptions}
               selectedVoiceId={selectedVoiceId}
               onVoiceChange={setVoice}
-              kokoroStatus={kokoroStatus}
               disabled={totalChunks === 0}
             />
           </div>
