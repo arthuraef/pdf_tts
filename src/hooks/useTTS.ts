@@ -167,7 +167,12 @@ export function useTTS(document: StoredDocument | null) {
       getPlaybackProgress(document.id).then((saved) => {
         if (saved) {
           const idx = Math.min(saved.chunkIndex, docChunks.length - 1);
-          const r = [1.0, 1.5, 2.0].includes(saved.playbackRate) ? saved.playbackRate : 1.0;
+          const r =
+            typeof saved.playbackRate === 'number' &&
+            saved.playbackRate >= 1.0 &&
+            saved.playbackRate <= 2.0
+              ? parseFloat(saved.playbackRate.toFixed(2))
+              : 1.0;
           const safeIdx = idx >= 0 ? idx : 0;
           setCurrentChunkIndex(safeIdx);
           setRate(r);
@@ -350,8 +355,9 @@ export function useTTS(document: StoredDocument | null) {
   }, [selectedVoiceId, currentChunkIndex, isPlaying, rate, chunks.length, startKokoro]);
 
   const handleRateChange = useCallback((newRate: number) => {
-    setRate(newRate);
-    nativeRef.current?.setRate(newRate);
+    const cleanRate = parseFloat(newRate.toFixed(2));
+    setRate(cleanRate);
+    nativeRef.current?.setRate(cleanRate);
   }, []);
 
   const handleVoiceChange = useCallback((voiceId: string) => {

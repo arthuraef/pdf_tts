@@ -76,14 +76,14 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
       )}
 
       <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
-        {/* Speed Slider: 1x to 2x with step 0.5 */}
-        <div className="flex flex-col gap-2 bg-slate-800/80 px-4 py-3 rounded-xl border border-slate-700/60 order-2 sm:order-1 w-full sm:w-64">
+        {/* Speed Slider: 1x to 2x with step 0.05 */}
+        <div className="flex flex-col gap-2 bg-slate-800/80 px-4 py-3 rounded-xl border border-slate-700/60 order-2 sm:order-1 w-full sm:w-72">
           <div className="flex items-center justify-between text-xs font-medium text-slate-300">
             <span className="flex items-center gap-1.5 text-slate-400">
               <Gauge className="w-3.5 h-3.5 text-indigo-400" /> Velocidade:
             </span>
             <span className="font-bold text-indigo-300 bg-indigo-500/20 px-2 py-0.5 rounded-md border border-indigo-500/30 font-mono">
-              x{rate.toFixed(1).replace('.', ',')}
+              x{rate.toFixed(2).replace('.', ',')}
             </span>
           </div>
 
@@ -91,37 +91,55 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
             type="range"
             min="1"
             max="2"
-            step="0.5"
+            step="0.05"
             value={rate}
             onChange={(e) => onRateChange(parseFloat(e.target.value))}
             disabled={disabled || isKokoroLoading}
             className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:opacity-50"
           />
 
-          <div className="flex justify-between text-[11px] font-semibold text-slate-400 px-0.5">
+          <div className="flex justify-between text-[10px] font-semibold text-slate-400 px-0.5">
             <button
               type="button"
               onClick={() => onRateChange(1.0)}
               className={`hover:text-indigo-400 transition cursor-pointer ${
-                rate === 1.0 ? 'text-indigo-400 font-bold' : ''
+                Math.abs(rate - 1.0) < 0.01 ? 'text-indigo-400 font-bold' : ''
               }`}
             >
               x1,0
             </button>
             <button
               type="button"
+              onClick={() => onRateChange(1.25)}
+              className={`hover:text-indigo-400 transition cursor-pointer ${
+                Math.abs(rate - 1.25) < 0.01 ? 'text-indigo-400 font-bold' : ''
+              }`}
+            >
+              x1,25
+            </button>
+            <button
+              type="button"
               onClick={() => onRateChange(1.5)}
               className={`hover:text-indigo-400 transition cursor-pointer ${
-                rate === 1.5 ? 'text-indigo-400 font-bold' : ''
+                Math.abs(rate - 1.5) < 0.01 ? 'text-indigo-400 font-bold' : ''
               }`}
             >
               x1,5
             </button>
             <button
               type="button"
+              onClick={() => onRateChange(1.75)}
+              className={`hover:text-indigo-400 transition cursor-pointer ${
+                Math.abs(rate - 1.75) < 0.01 ? 'text-indigo-400 font-bold' : ''
+              }`}
+            >
+              x1,75
+            </button>
+            <button
+              type="button"
               onClick={() => onRateChange(2.0)}
               className={`hover:text-indigo-400 transition cursor-pointer ${
-                rate === 2.0 ? 'text-indigo-400 font-bold' : ''
+                Math.abs(rate - 2.0) < 0.01 ? 'text-indigo-400 font-bold' : ''
               }`}
             >
               x2,0
