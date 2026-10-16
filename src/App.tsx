@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
-import { Headphones, BookOpen, Trash2 } from 'lucide-react';
+import { Headphones, BookOpen, Trash2, Library } from 'lucide-react';
 import { PDFUpload } from './components/PDFUpload';
 import { PlayerControls } from './components/PlayerControls';
 import { ProgressBar } from './components/ProgressBar';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
+import { LibraryModal } from './components/LibraryModal';
 import { useTTS } from './hooks/useTTS';
 import { useMediaSession } from './hooks/useMediaSession';
-import { getActiveDocument, clearActiveDocument } from './storage/db';
+import { getActiveDocument, deleteDocument, setActiveDocId } from './storage/db';
 import type { StoredDocument } from './types';
 
 export function App() {
   const [activeDoc, setActiveDoc] = useState<StoredDocument | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [isLibraryOpen, setIsLibraryOpen] = useState(false);
 
   // Restore existing document from IndexedDB on startup
   useEffect(() => {
@@ -65,9 +67,22 @@ export function App() {
     setActiveDoc(doc);
   };
 
+  const handleSelectDocument = (doc: StoredDocument) => {
+    pause();
+    setActiveDocId(doc.id ?? null);
+    setActiveDoc(doc);
+  };
+
+  const handleUploadFromLibrary = () => {
+    pause();
+    setActiveDoc(null);
+  };
+
   const handleRemoveDocument = async () => {
     pause();
-    await clearActiveDocument();
+    if (activeDoc?.id) {
+      await deleteDocument(activeDoc.id);
+    }
     setActiveDoc(null);
   };
 
@@ -93,7 +108,19 @@ export function App() {
           </div>
         </div>
 
-        <PWAInstallPrompt />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsLibraryOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-850 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-750 transition text-xs font-semibold cursor-pointer shadow-sm"
+            title="Abrir minha biblioteca de livros"
+          >
+            <Library className="w-4 h-4 text-indigo-400" />
+            <span className="hidden sm:inline">Biblioteca</span>
+          </button>
+
+          <PWAInstallPrompt />
+        </div>
       </header>
 
       {/* Main Body */}
@@ -111,6 +138,17 @@ export function App() {
             </div>
 
             <PDFUpload onDocumentLoaded={handleDocumentLoaded} />
+
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={() => setIsLibraryOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-850 text-indigo-300 hover:text-white border border-slate-800 hover:border-slate-700 text-xs font-semibold transition cursor-pointer shadow-sm"
+              >
+                <Library className="w-4 h-4 text-indigo-400" />
+                Ver Livros Salvos na Biblioteca
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-6">
@@ -131,14 +169,26 @@ export function App() {
                 </div>
               </div>
 
-              <button
-                onClick={handleRemoveDocument}
-                title="Trocar documento"
-                className="text-slate-400 hover:text-rose-400 p-2 rounded-lg hover:bg-slate-800 transition flex items-center gap-1.5 text-xs font-medium"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span className="hidden sm:inline">Trocar</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsLibraryOpen(true)}
+                  title="Ver todos os livros na biblioteca"
+                  className="text-slate-300 hover:text-white bg-slate-800/90 hover:bg-slate-700 px-3 py-1.5 rounded-xl border border-slate-700/70 transition flex items-center gap-1.5 text-xs font-semibold cursor-pointer shadow-sm"
+                >
+                  <Library className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Biblioteca</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleRemoveDocument}
+                  title="Remover livro atual"
+                  className="text-slate-400 hover:text-rose-400 p-2 rounded-xl hover:bg-slate-800 transition flex items-center gap-1.5 text-xs font-medium cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Visual Progress Bar & Current Text */}
@@ -173,6 +223,15 @@ export function App() {
           </div>
         )}
       </main>
+
+      {/* Library Modal */}
+      <LibraryModal
+        isOpen={isLibraryOpen}
+        onClose={() => setIsLibraryOpen(false)}
+        activeDocId={activeDoc?.id}
+        onSelectDocument={handleSelectDocument}
+        onUploadNew={handleUploadFromLibrary}
+      />
 
       {/* Footer */}
       <footer className="max-w-3xl w-full mx-auto text-center pt-6 border-t border-slate-850 text-xs text-slate-600">

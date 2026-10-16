@@ -22,6 +22,11 @@ export interface PlaybackState {
   updatedAt: Date;
 }
 
+export interface DocumentWithProgress extends StoredDocument {
+  progress?: PlaybackState;
+  progressPercentage: number;
+}
+
 export interface TextChunk {
   pageIndex: number;
   chunkIndex: number;

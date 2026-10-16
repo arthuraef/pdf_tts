@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { StoredDocument, PlaybackState } from '../types';
+import type { StoredDocument, PlaybackState, DocumentWithProgress } from '../types';
 
 export class PDFVoiceDatabase extends Dexie {
   documents!: Table<StoredDocument, number>;
@@ -16,12 +16,41 @@ export class PDFVoiceDatabase extends Dexie {
 
 export const db = new PDFVoiceDatabase();
 
+const ACTIVE_DOC_STORAGE_KEY = 'pdf_voice_active_doc_id';
+
+export function getActiveDocId(): number | null {
+  try {
+    const val = localStorage.getItem(ACTIVE_DOC_STORAGE_KEY);
+    return val ? parseInt(val, 10) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setActiveDocId(id: number | null): void {
+  try {
+    if (id === null) {
+      localStorage.removeItem(ACTIVE_DOC_STORAGE_KEY);
+    } else {
+      localStorage.setItem(ACTIVE_DOC_STORAGE_KEY, id.toString());
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export async function saveDocument(
   fileName: string,
   fileSize: number,
   pages: { pageNumber: number; text: string }[]
 ): Promise<number> {
-  const existing = await db.documents.orderBy('id').first();
+  // Check if a document with the exact same name and size already exists
+  const existing = await db.documents
+    .where('fileName')
+    .equals(fileName)
+    .filter((doc) => doc.fileSize === fileSize)
+    .first();
+
   const docData: StoredDocument = {
     fileName,
     fileSize,
@@ -31,16 +60,71 @@ export async function saveDocument(
     updatedAt: new Date(),
   };
 
+  let id: number;
   if (existing?.id) {
-    await db.documents.put({ ...docData, id: existing.id });
-    return existing.id;
+    await db.documents.update(existing.id, {
+      ...docData,
+      updatedAt: new Date(),
+    });
+    id = existing.id;
   } else {
-    return await db.documents.add(docData);
+    id = await db.documents.add(docData);
   }
+
+  setActiveDocId(id);
+  return id;
+}
+
+export async function getAllDocuments(): Promise<StoredDocument[]> {
+  return await db.documents.orderBy('updatedAt').reverse().toArray();
+}
+
+export async function getDocumentById(id: number): Promise<StoredDocument | undefined> {
+  return await db.documents.get(id);
 }
 
 export async function getActiveDocument(): Promise<StoredDocument | undefined> {
-  return await db.documents.orderBy('id').last();
+  const activeId = getActiveDocId();
+  if (activeId) {
+    const doc = await db.documents.get(activeId);
+    if (doc) return doc;
+  }
+  // Fallback: get the most recently updated document
+  const recent = await db.documents.orderBy('updatedAt').reverse().first();
+  if (recent?.id) {
+    setActiveDocId(recent.id);
+  }
+  return recent;
+}
+
+export async function deleteDocument(id: number): Promise<void> {
+  await db.documents.delete(id);
+  await db.playbackStates.where('docId').equals(id).delete();
+
+  if (getActiveDocId() === id) {
+    setActiveDocId(null);
+  }
+}
+
+export async function getAllDocumentsWithProgress(): Promise<DocumentWithProgress[]> {
+  const docs = await db.documents.orderBy('updatedAt').reverse().toArray();
+  const result: DocumentWithProgress[] = [];
+
+  for (const doc of docs) {
+    if (!doc.id) continue;
+    const progress = await db.playbackStates.where('docId').equals(doc.id).first();
+    let percentage = 0;
+    if (progress && doc.totalPages > 0) {
+      percentage = Math.min(100, Math.round(((progress.pageIndex + 1) / doc.totalPages) * 100));
+    }
+    result.push({
+      ...doc,
+      progress,
+      progressPercentage: percentage,
+    });
+  }
+
+  return result;
 }
 
 export async function savePlaybackProgress(
@@ -63,6 +147,13 @@ export async function savePlaybackProgress(
   } else {
     await db.playbackStates.add(stateData);
   }
+
+  // Touch the document's updatedAt so it becomes the most recently read
+  try {
+    await db.documents.update(docId, { updatedAt: new Date() });
+  } catch {
+    // ignore
+  }
 }
 
 export async function getPlaybackProgress(docId: number): Promise<PlaybackState | undefined> {
@@ -70,6 +161,8 @@ export async function getPlaybackProgress(docId: number): Promise<PlaybackState 
 }
 
 export async function clearActiveDocument(): Promise<void> {
-  await db.documents.clear();
-  await db.playbackStates.clear();
+  const activeId = getActiveDocId();
+  if (activeId) {
+    await deleteDocument(activeId);
+  }
 }
