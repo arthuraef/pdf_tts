@@ -8,7 +8,7 @@ import { VOICE_STYLES, parseTextToActingScores } from '../src/oscar-engine/direc
 import { calculateBionicSpeedMultiplier } from '../src/oscar-engine/director/bionicSpeed.ts';
 import { FallbackNativeTts } from '../src/oscar-engine/transport/fallbackNativeTts.ts';
 import { OscarEngine } from '../src/oscar-engine/index.ts';
-import { splitSentenceUnderLimit } from '../src/core/text-chunker.ts';
+import { splitSentenceUnderLimit, splitIntoSentences } from '../src/core/text-chunker.ts';
 
 // ---------------------------------------------------------------------------
 // 1. Sanitizer Tests
@@ -262,3 +262,41 @@ test('TextChunker: splitSentenceUnderLimit ensures sentences stay strictly under
     );
   });
 });
+
+test('TextChunker: splitIntoSentences ensures every chunk starts and ends between periods', () => {
+  const samplePdfPage = `
+Capítulo Primeiro
+
+A grande jornada começou quando o navio zarpou
+do porto ao entardecer. O passageiro pagou R$ 1.500,50 pela cabine.
+Você acredita que chegaremos a tempo? perguntou ele com curiosidade.
+Sim! Não há motivos para dúvidas... tudo correrá bem.
+Ele disse: "Estaremos seguros aqui."
+  `;
+
+  const chunks = splitIntoSentences(samplePdfPage);
+
+  assert.ok(chunks.length >= 5);
+
+  chunks.forEach((chunk, index) => {
+    assert.ok(chunk.length > 0, `Chunk ${index} não pode ser vazio`);
+    // Deve terminar estritamente com pontuação final (. ! ? ... com aspas opcionais)
+    assert.match(
+      chunk,
+      /[.!?…]["'”»)]*$/,
+      `Chunk ${index} deve terminar com ponto final: "${chunk}"`
+    );
+    // Não deve começar com vírgulas ou pontuação solta
+    assert.doesNotMatch(
+      chunk,
+      /^[,;:]/,
+      `Chunk ${index} não pode começar com vírgula ou pontuação secundária: "${chunk}"`
+    );
+  });
+
+  // Verifica que número com ponto não causou quebra indevida
+  assert.ok(chunks.some((c) => c.includes('R$ 1.500,50')));
+  // Verifica que título sem ponto recebeu ponto final
+  assert.equal(chunks[0], 'Capítulo Primeiro.');
+});
+

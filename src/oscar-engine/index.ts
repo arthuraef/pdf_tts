@@ -8,7 +8,7 @@ import { sanitizeDocumentPages } from './sanitizer';
 import { parseTextToActingScores, VOICE_STYLES } from './director';
 import { PrefetchQueue, fallbackNativeTts } from './transport';
 import { webAudioStage, audioBuffersToWavBlob, triggerAudioDownload, breathInjector } from './audio-stage';
-import { splitSentenceUnderLimit } from '../core/text-chunker';
+import { splitIntoSentences } from '../core/text-chunker';
 
 export * from './types';
 export * from './sanitizer';
@@ -158,15 +158,7 @@ export class OscarEngine {
     sanitizedPages.forEach((pageContent, pageIdx) => {
       if (!pageContent.trim()) return;
 
-      const sentences = pageContent.match(/[^.!?\n]+[.!?\n]*/g) || [pageContent];
-      const sentenceStrings: string[] = [];
-
-      for (const s of sentences) {
-        const trimmed = s.trim();
-        if (!trimmed) continue;
-        const subClauses = splitSentenceUnderLimit(trimmed, 160);
-        sentenceStrings.push(...subClauses);
-      }
+      const sentenceStrings = splitIntoSentences(pageContent);
 
       const pageScoreChunks = parseTextToActingScores(sentenceStrings, {
         docId: this.docId,
@@ -203,15 +195,7 @@ export class OscarEngine {
     sanitizedPages.forEach((pageContent, pageIdx) => {
       if (!pageContent.trim()) return;
 
-      const sentences = pageContent.match(/[^.!?\n]+[.!?\n]*/g) || [pageContent];
-      const sentenceStrings: string[] = [];
-
-      for (const s of sentences) {
-        const trimmed = s.trim();
-        if (!trimmed) continue;
-        const subClauses = splitSentenceUnderLimit(trimmed, 160);
-        sentenceStrings.push(...subClauses);
-      }
+      const sentenceStrings = splitIntoSentences(pageContent);
 
       const pageScoreChunks = parseTextToActingScores(sentenceStrings, {
         docId: this.docId,
