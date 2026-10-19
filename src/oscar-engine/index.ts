@@ -22,7 +22,7 @@ export class OscarEngine {
     spatialAudioEnabled: true,
     breathInjectionEnabled: false,
     basePlaybackRate: 1.0,
-    voiceStyle: 'dramatic',
+    voiceStyle: 'classic',
     primaryVoice: '',
     secondaryVoice: '',
   };
@@ -237,7 +237,7 @@ export class OscarEngine {
       this.currentIndex = Math.max(0, Math.min(targetIndex, this.scoreChunks.length - 1));
     }
 
-    await webAudioStage.ensureUnlocked();
+    webAudioStage.ensureUnlocked().catch(() => {});
 
     if (this.isPaused) {
       webAudioStage.resume();

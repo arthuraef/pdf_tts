@@ -12,7 +12,7 @@ import { buildSSML } from './ssmlBuilder';
 export const VOICE_STYLES: Record<VoiceStyle, VoiceStyleDefinition> = {
   classic: {
     id: 'classic',
-    label: 'Narrador Clássico',
+    label: 'Narrador',
     emoji: '📖',
     description: 'Leitura sóbria, cadenciada e equilibrada no estilo audiolivro tradicional.',
     pitchMultiplier: 1.0,
@@ -22,9 +22,9 @@ export const VOICE_STYLES: Record<VoiceStyle, VoiceStyleDefinition> = {
   },
   dramatic: {
     id: 'dramatic',
-    label: 'Dramático & Expressivo',
+    label: 'Dramático',
     emoji: '🎭',
-    description: 'Atuação teatral expressiva com cadência envolvente sem distorção.',
+    description: 'Atuação expressiva com cadência envolvente.',
     pitchMultiplier: 1.04,
     pauseMsMultiplier: 1.15,
     rateMultiplier: 0.96,
@@ -32,9 +32,9 @@ export const VOICE_STYLES: Record<VoiceStyle, VoiceStyleDefinition> = {
   },
   didactic: {
     id: 'didactic',
-    label: 'Concurso & Didático',
+    label: 'Didático',
     emoji: '🎓',
-    description: 'Dicção firme, pausada e focada para memorização de leis e apostilas.',
+    description: 'Dicção firme e pausada para estudo.',
     pitchMultiplier: 0.98,
     pauseMsMultiplier: 0.95,
     rateMultiplier: 1.02,
@@ -42,7 +42,7 @@ export const VOICE_STYLES: Record<VoiceStyle, VoiceStyleDefinition> = {
   },
   dynamic: {
     id: 'dynamic',
-    label: 'Dinâmico & Bionic Flow',
+    label: 'Dinâmico',
     emoji: '⚡',
     description: 'Velocidade acelerada e transições ágeis para audição eficiente.',
     pitchMultiplier: 1.02,
@@ -52,7 +52,7 @@ export const VOICE_STYLES: Record<VoiceStyle, VoiceStyleDefinition> = {
   },
   calm: {
     id: 'calm',
-    label: 'Calmo & Noturno',
+    label: 'Calmo',
     emoji: '🧘',
     description: 'Ritmo suave e voz macia, agradável para descanso e concentração.',
     pitchMultiplier: 0.96,
@@ -61,6 +61,8 @@ export const VOICE_STYLES: Record<VoiceStyle, VoiceStyleDefinition> = {
     breathEnabled: false,
   },
 };
+
+export const USER_VOICE_STYLES: VoiceStyle[] = ['classic', 'dynamic', 'calm'];
 
 export interface ParseOptions {
   docId: number;
@@ -78,7 +80,7 @@ export function parseTextToActingScores(
   const {
     docId,
     pageNumber,
-    voiceStyle = 'dramatic',
+    voiceStyle = 'classic',
     primaryVoice = 'pt-BR-FranciscaNeural',
     secondaryVoice = 'pt-BR-AntonioNeural',
     bionicEnabled = true,

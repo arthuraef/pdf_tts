@@ -8,6 +8,7 @@ export interface ExtractionResult {
   pages: PDFPageContent[];
   totalCharacters: number;
   chapters: ChapterOutlineItem[];
+  coverUrl?: string;
 }
 
 export async function extractTextFromPDF(
@@ -115,9 +116,29 @@ export async function extractTextFromPDF(
     });
   }
 
+  // 🎨 Geração de capa em miniatura da página 1 do PDF
+  let coverUrl: string | undefined;
+  if (typeof document !== 'undefined') {
+    try {
+      const firstPage = await pdfDocument.getPage(1);
+      const viewport = firstPage.getViewport({ scale: 0.6 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        await (firstPage.render({ canvasContext: ctx, viewport } as any) as any).promise;
+        coverUrl = canvas.toDataURL('image/jpeg', 0.85);
+      }
+    } catch (err) {
+      console.warn('[PDFParser] Não foi possível renderizar a capa da página 1:', err);
+    }
+  }
+
   return {
     pages,
     totalCharacters,
     chapters,
+    coverUrl,
   };
 }

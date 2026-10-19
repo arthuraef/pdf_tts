@@ -25,6 +25,7 @@ export interface StoredDocument {
   totalPages: number;
   pages: PDFPageContent[];
   chapters?: ChapterOutlineItem[];
+  coverUrl?: string;
   createdAt: Date;
   updatedAt: Date;
 }

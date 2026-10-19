@@ -111,10 +111,13 @@ export class FallbackNativeTts {
         if (lang === 'pt-br') s += 60;
         else if (lang.startsWith('pt')) s += 20;
 
+        // Google Brasil (online) prioritizada com score máximo
+        if (/google/i.test(name) && /pt/i.test(lang)) s += 200;
+        else if (/google/i.test(name)) s += 120;
+
         // Neural / Online natural voices (Francisca, Antonio, Google, Microsoft, Apple Enhanced)
         if (/natural|neural|online/.test(name)) s += 50;
         if (/francisca|antonio|thalita|fabio/.test(name)) s += 45;
-        if (/google/.test(name)) s += 40;
         if (/premium|enhanced|siri|luciana|felipe|leticia/.test(name)) s += 35;
         if (v.localService) s -= 5;
         return s;
@@ -147,8 +150,9 @@ export class FallbackNativeTts {
       }
     }
 
-    // Cancel current speaking if active
-    if (this.synth.speaking || this.synth.pending) {
+    // Se já estava falando, cancela antes de iniciar
+    const wasSpeaking = this.synth.speaking || this.synth.pending;
+    if (wasSpeaking) {
       try {
         this.synth.cancel();
       } catch {
@@ -156,8 +160,7 @@ export class FallbackNativeTts {
       }
     }
 
-    // Chromium bug fix: execute speak() after a micro-delay (40ms) to allow cancel() to cleanly settle
-    this.speakTimeout = window.setTimeout(() => {
+    const doSpeak = () => {
       if (!this.synth) return;
 
       const utterance = new SpeechSynthesisUtterance(options.text);
@@ -165,7 +168,7 @@ export class FallbackNativeTts {
       utterance.pitch = Math.max(0.5, Math.min(2.0, options.pitch ?? 1.0));
       utterance.volume = options.volume ?? 1.0;
 
-      // Find the requested voice or choose top ranked PT voice
+      // Find Google Brasil or top ranked PT voice
       const ptVoices = this.getPortugueseVoices();
       let chosenVoice: SpeechSynthesisVoice | undefined;
 
@@ -179,7 +182,8 @@ export class FallbackNativeTts {
       }
 
       if (!chosenVoice && ptVoices.length > 0) {
-        chosenVoice = ptVoices[0];
+        // Prioriza a voz Google Brasil expressamente
+        chosenVoice = ptVoices.find((v) => /google/i.test(v.name)) || ptVoices[0];
       }
 
       if (chosenVoice) {
@@ -240,7 +244,14 @@ export class FallbackNativeTts {
         console.error('[FallbackNativeTts] synth.speak error:', err);
         options.onError?.(err);
       }
-    }, 40);
+    };
+
+    // Performance máxima: se o sintetizador estava ocioso, fala instantaneamente (0ms de lag)
+    if (wasSpeaking) {
+      this.speakTimeout = window.setTimeout(doSpeak, 15);
+    } else {
+      doSpeak();
+    }
   }
 
   public preview(text: string, voiceURI?: string, rate: number = 1.0, pitch: number = 1.0): void {

@@ -171,10 +171,10 @@ test('FallbackNativeTts: Voice ranking and Portuguese selection', () => {
   const ptVoices = tts.getPortugueseVoices();
   assert.equal(ptVoices.length, 4);
 
-  // Top voice should be Francisca (Natural Neural PT-BR)
-  assert.equal(ptVoices[0].voiceURI, 'francisca-br');
-  // Second should be Google PT-BR
-  assert.equal(ptVoices[1].voiceURI, 'google-pt-br');
+  // Top voice should be Google Brasil (Online) per user preference
+  assert.equal(ptVoices[0].voiceURI, 'google-pt-br');
+  // Second should be Francisca / Natural
+  assert.equal(ptVoices[1].voiceURI, 'francisca-br');
 
   // Test speaking
   tts.speak({

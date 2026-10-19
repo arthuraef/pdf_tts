@@ -20,8 +20,8 @@ export function useOscarEngine(document: StoredDocument | null) {
   const [spatialAudioEnabled, setSpatialAudioEnabled] = useState(true);
   const [breathEnabled, setBreathEnabled] = useState(false);
 
-  // Seleção de Estilo de Voz e Vozes
-  const [voiceStyle, setVoiceStyleState] = useState<VoiceStyle>('dramatic');
+  // Seleção de Estilo de Voz e Vozes (Apenas Narrador, Dinâmico e Calmo)
+  const [voiceStyle, setVoiceStyleState] = useState<VoiceStyle>('classic');
   const [availableVoices, setAvailableVoices] = useState<VoiceOption[]>([]);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>('');
 
@@ -332,7 +332,11 @@ export function useOscarEngine(document: StoredDocument | null) {
     engineRef.current?.preview(`Demonstração do estilo ${styleDef.label}.`, selectedVoiceId, style);
   }, [selectedVoiceId]);
 
-  const voiceStylesList: VoiceStyleDefinition[] = Object.values(VOICE_STYLES);
+  const voiceStylesList: VoiceStyleDefinition[] = [
+    VOICE_STYLES.classic,
+    VOICE_STYLES.dynamic,
+    VOICE_STYLES.calm,
+  ];
 
   return {
     isPlaying,

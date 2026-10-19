@@ -65,7 +65,8 @@ export async function saveDocument(
   fileName: string,
   fileSize: number,
   pages: { pageNumber: number; text: string }[],
-  chapters?: ChapterOutlineItem[]
+  chapters?: ChapterOutlineItem[],
+  coverUrl?: string
 ): Promise<number> {
   // Check if a document with the exact same name and size already exists
   const existing = await db.documents
@@ -80,6 +81,7 @@ export async function saveDocument(
     totalPages: pages.length,
     pages,
     chapters: chapters && chapters.length > 0 ? chapters : undefined,
+    coverUrl: coverUrl || existing?.coverUrl,
     createdAt: existing ? existing.createdAt : new Date(),
     updatedAt: new Date(),
   };

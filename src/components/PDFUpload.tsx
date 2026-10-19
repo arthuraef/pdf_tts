@@ -24,7 +24,7 @@ export const PDFUpload: React.FC<PDFUploadProps> = ({ onDocumentLoaded }) => {
     setError(null);
 
     try {
-      const { pages, totalCharacters, chapters } = await extractTextFromPDF(file);
+      const { pages, totalCharacters, chapters, coverUrl } = await extractTextFromPDF(file);
 
       if (totalCharacters === 0) {
         setError(
@@ -34,7 +34,7 @@ export const PDFUpload: React.FC<PDFUploadProps> = ({ onDocumentLoaded }) => {
         return;
       }
 
-      const id = await saveDocument(file.name, file.size, pages, chapters);
+      const id = await saveDocument(file.name, file.size, pages, chapters, coverUrl);
       const doc: StoredDocument = {
         id,
         fileName: file.name,
@@ -42,6 +42,7 @@ export const PDFUpload: React.FC<PDFUploadProps> = ({ onDocumentLoaded }) => {
         totalPages: pages.length,
         pages,
         chapters,
+        coverUrl,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
