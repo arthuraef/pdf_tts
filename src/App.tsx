@@ -3,9 +3,11 @@ import { Headphones, BookOpen, Trash2, Library } from 'lucide-react';
 import { PDFUpload } from './components/PDFUpload';
 import { PlayerControls } from './components/PlayerControls';
 import { ProgressBar } from './components/ProgressBar';
+import { OscarControls } from './components/OscarControls';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { LibraryModal } from './components/LibraryModal';
 import { useTTS } from './hooks/useTTS';
+import { useOscarEngine } from './hooks/useOscarEngine';
 import { useMediaSession } from './hooks/useMediaSession';
 import { getActiveDocument, deleteDocument, setActiveDocId } from './storage/db';
 import type { StoredDocument } from './types';
@@ -14,6 +16,7 @@ export function App() {
   const [activeDoc, setActiveDoc] = useState<StoredDocument | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  const [isOscarMode, setIsOscarMode] = useState(true);
 
   // Restore existing document from IndexedDB on startup
   useEffect(() => {
@@ -25,42 +28,29 @@ export function App() {
     });
   }, []);
 
-  const {
-    isPlaying,
-    isPaused,
-    isFinished,
-    rate,
-    currentChunkIndex,
-    totalChunks,
-    currentPage,
-    currentChunkText,
-    voiceOptions,
-    selectedVoiceId,
-    play,
-    pause,
-    resume,
-    restart,
-    skipBackward,
-    skipForward,
-    goToPage,
-    setRate,
-    setVoice,
-  } = useTTS(activeDoc);
+  // Hook do Oscar Engine HD
+  const oscar = useOscarEngine(isOscarMode ? activeDoc : null);
+
+  // Hook nativo clássico do Web Speech API (fallback ou escolha do usuário)
+  const native = useTTS(!isOscarMode ? activeDoc : null);
+
+  // Unifica a interface do motor ativo
+  const active = isOscarMode ? oscar : native;
 
   // Sync background playback and lockscreen media controls
   useMediaSession({
     document: activeDoc,
-    currentPage,
-    currentChunkIndex,
-    totalChunks,
-    isPlaying,
-    isPaused,
-    rate,
-    play,
-    pause,
-    resume,
-    skipBackward,
-    skipForward,
+    currentPage: active.currentPage,
+    currentChunkIndex: active.currentChunkIndex,
+    totalChunks: active.totalChunks,
+    isPlaying: active.isPlaying,
+    isPaused: active.isPaused,
+    rate: active.rate,
+    play: active.play,
+    pause: active.pause,
+    resume: active.resume,
+    skipBackward: active.skipBackward,
+    skipForward: active.skipForward,
   });
 
   const handleDocumentLoaded = (doc: StoredDocument) => {
@@ -68,22 +58,27 @@ export function App() {
   };
 
   const handleSelectDocument = (doc: StoredDocument) => {
-    pause();
+    active.pause();
     setActiveDocId(doc.id ?? null);
     setActiveDoc(doc);
   };
 
   const handleUploadFromLibrary = () => {
-    pause();
+    active.pause();
     setActiveDoc(null);
   };
 
   const handleRemoveDocument = async () => {
-    pause();
+    active.pause();
     if (activeDoc?.id) {
       await deleteDocument(activeDoc.id);
     }
     setActiveDoc(null);
+  };
+
+  const handleToggleOscarMode = () => {
+    active.pause();
+    setIsOscarMode((prev) => !prev);
   };
 
   if (!isReady) {
@@ -104,7 +99,7 @@ export function App() {
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-white m-0">PDF Voice</h1>
-            <p className="text-xs text-slate-400">Leitor de PDF em Voz Alta (MVP)</p>
+            <p className="text-xs text-slate-400">OscarVoice Engine v3.0 • 100% Client-Side</p>
           </div>
         </div>
 
@@ -129,11 +124,10 @@ export function App() {
           <div className="space-y-6">
             <div className="text-center space-y-2 max-w-md mx-auto">
               <h2 className="text-2xl font-bold text-white tracking-tight">
-                Transforme seus PDFs em áudio
+                Transforme seus PDFs em audiolivros de cinema
               </h2>
               <p className="text-sm text-slate-400">
-                Ouça livros, artigos e documentos diretamente no seu navegador, offline e sem
-                custos.
+                Ouça livros e apostilas com voz humana neural, áudio 3D e ritmo inteligente no seu navegador.
               </p>
             </div>
 
@@ -191,34 +185,51 @@ export function App() {
               </div>
             </div>
 
-            {/* Visual Progress Bar & Current Text */}
-            <ProgressBar
-              currentPage={currentPage}
-              totalPages={activeDoc.totalPages}
-              currentChunkIndex={currentChunkIndex}
-              totalChunks={totalChunks}
-              currentTextSnippet={currentChunkText}
-              onGoToPage={goToPage}
-              disabled={totalChunks === 0}
+            {/* Painel de Controle de Superpoderes do Oscar Engine */}
+            <OscarControls
+              isOscarActive={isOscarMode}
+              onToggleOscar={handleToggleOscarMode}
+              bionicEnabled={oscar.bionicEnabled}
+              onToggleBionic={oscar.toggleBionic}
+              spatialAudioEnabled={oscar.spatialAudioEnabled}
+              onToggleSpatialAudio={oscar.toggleSpatialAudio}
+              breathEnabled={oscar.breathEnabled}
+              onToggleBreath={oscar.toggleBreath}
+              isOfflineFallback={oscar.isOfflineFallback}
+              currentRole={oscar.currentChunkRole}
+              currentVoiceId={oscar.currentVoiceId}
+              onExportAudio={oscar.exportAudio}
+              disabled={active.totalChunks === 0}
             />
 
-            {/* Audio Controls (Play, Pause, Skip ±10s, Rate, Voice) */}
+            {/* Visual Progress Bar & Current Text */}
+            <ProgressBar
+              currentPage={active.currentPage}
+              totalPages={activeDoc.totalPages}
+              currentChunkIndex={active.currentChunkIndex}
+              totalChunks={active.totalChunks}
+              currentTextSnippet={active.currentChunkText}
+              onGoToPage={active.goToPage}
+              disabled={active.totalChunks === 0}
+            />
+
+            {/* Audio Controls (Play, Pause, Skip ±10s, Rate) */}
             <PlayerControls
-              isPlaying={isPlaying}
-              isPaused={isPaused}
-              isFinished={isFinished}
-              onPlay={play}
-              onPause={pause}
-              onResume={resume}
-              onRestart={restart}
-              onSkipBackward={skipBackward}
-              onSkipForward={skipForward}
-              rate={rate}
-              onRateChange={setRate}
-              voices={voiceOptions}
-              selectedVoiceId={selectedVoiceId}
-              onVoiceChange={setVoice}
-              disabled={totalChunks === 0}
+              isPlaying={active.isPlaying}
+              isPaused={active.isPaused}
+              isFinished={active.isFinished}
+              onPlay={active.play}
+              onPause={active.pause}
+              onResume={active.resume}
+              onRestart={active.restart}
+              onSkipBackward={active.skipBackward}
+              onSkipForward={active.skipForward}
+              rate={active.rate}
+              onRateChange={active.setRate}
+              voices={!isOscarMode ? native.voiceOptions : []}
+              selectedVoiceId={!isOscarMode ? native.selectedVoiceId : ''}
+              onVoiceChange={!isOscarMode ? native.setVoice : () => {}}
+              disabled={active.totalChunks === 0}
             />
           </div>
         )}
@@ -235,7 +246,7 @@ export function App() {
 
       {/* Footer */}
       <footer className="max-w-3xl w-full mx-auto text-center pt-6 border-t border-slate-850 text-xs text-slate-600">
-        PDF Voice • 100% Client-Side • PWA Offline • Sem necessidade de backend
+        PDF Voice • OscarVoice Engine v3.0 • 100% Client-Side • PWA Offline • Custo Marginal Zero
       </footer>
     </div>
   );

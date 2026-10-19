@@ -1,15 +1,30 @@
 import Dexie, { type Table } from 'dexie';
 import type { StoredDocument, PlaybackState, DocumentWithProgress } from '../types';
 
+export interface AudioCacheItem {
+  id: string; // Hash único do chunk
+  docId: number;
+  pageNumber: number;
+  chunkIndex: number;
+  audioBlob: Blob;
+  timestamp: number;
+}
+
 export class PDFVoiceDatabase extends Dexie {
   documents!: Table<StoredDocument, number>;
   playbackStates!: Table<PlaybackState, number>;
+  audioCache!: Table<AudioCacheItem, string>;
 
   constructor() {
     super('PDFVoiceDB');
     this.version(1).stores({
       documents: '++id, fileName, updatedAt',
       playbackStates: '++id, docId, updatedAt',
+    });
+    this.version(2).stores({
+      documents: '++id, fileName, updatedAt',
+      playbackStates: '++id, docId, updatedAt',
+      audioCache: 'id, docId, pageNumber, timestamp',
     });
   }
 }
@@ -166,3 +181,64 @@ export async function clearActiveDocument(): Promise<void> {
     await deleteDocument(activeId);
   }
 }
+
+/**
+ * Busca áudio no cache local por ID.
+ */
+export async function getCachedAudio(id: string): Promise<Blob | null> {
+  try {
+    const item = await db.audioCache.get(id);
+    if (item) {
+      // Atualiza timestamp para controle LRU
+      await db.audioCache.update(id, { timestamp: Date.now() });
+      return item.audioBlob;
+    }
+  } catch (err) {
+    console.warn('Erro ao ler cache de áudio:', err);
+  }
+  return null;
+}
+
+/**
+ * Salva chunk de áudio no cache local, garantindo limite LRU de 50 entradas.
+ */
+export async function saveAudioToCache(
+  id: string,
+  docId: number,
+  pageNumber: number,
+  chunkIndex: number,
+  audioBlob: Blob
+): Promise<void> {
+  try {
+    await db.audioCache.put({
+      id,
+      docId,
+      pageNumber,
+      chunkIndex,
+      audioBlob,
+      timestamp: Date.now(),
+    });
+
+    // Controle LRU: se passar de 50 chunks, remove os mais antigos
+    const count = await db.audioCache.count();
+    if (count > 50) {
+      const excess = count - 50;
+      const oldestKeys = await db.audioCache.orderBy('timestamp').limit(excess).primaryKeys();
+      await db.audioCache.bulkDelete(oldestKeys);
+    }
+  } catch (err) {
+    console.warn('Erro ao salvar no cache de áudio:', err);
+  }
+}
+
+/**
+ * Remove chunks cacheados de um documento específico.
+ */
+export async function clearAudioCacheForDoc(docId: number): Promise<void> {
+  try {
+    await db.audioCache.where('docId').equals(docId).delete();
+  } catch (err) {
+    console.warn('Erro ao limpar cache de áudio do doc:', err);
+  }
+}
+
