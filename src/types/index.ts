@@ -3,12 +3,28 @@ export interface PDFPageContent {
   text: string;
 }
 
+export interface ChapterOutlineItem {
+  title: string;
+  pageNumber: number;
+  level?: number;
+}
+
+export interface BookHighlight {
+  id?: number;
+  docId: number;
+  pageNumber: number;
+  chunkIndex: number;
+  text: string;
+  createdAt: Date;
+}
+
 export interface StoredDocument {
   id?: number;
   fileName: string;
   fileSize: number;
   totalPages: number;
   pages: PDFPageContent[];
+  chapters?: ChapterOutlineItem[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,3 +54,4 @@ export interface VoiceOption {
   label: string; // displayed in dropdown
   nativeVoice: SpeechSynthesisVoice;
 }
+

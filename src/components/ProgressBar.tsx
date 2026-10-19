@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Compass } from 'lucide-react';
 
 interface ProgressBarProps {
@@ -7,6 +7,9 @@ interface ProgressBarProps {
   currentChunkIndex: number;
   totalChunks: number;
   currentTextSnippet?: string;
+  previousTextSnippet?: string;
+  nextTextSnippet?: string;
+  highlightWord?: { index: number; length: number } | null;
   onGoToPage: (page: number) => void;
   disabled?: boolean;
 }
@@ -17,15 +20,21 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   currentChunkIndex,
   totalChunks,
   currentTextSnippet,
+  previousTextSnippet,
+  nextTextSnippet,
+  highlightWord,
   onGoToPage,
   disabled = false,
 }) => {
   const percentage = totalChunks > 0 ? Math.round(((currentChunkIndex + 1) / totalChunks) * 100) : 0;
   const [pageInput, setPageInput] = useState<string>(currentPage.toString());
+  const [scrubberValue, setScrubberValue] = useState<number>(currentPage);
+  const scrubberDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Keep local input in sync with currentPage as audio progresses
+  // Keep local inputs in sync with currentPage as audio progresses
   useEffect(() => {
     setPageInput(currentPage.toString());
+    setScrubberValue(currentPage);
   }, [currentPage]);
 
   const handlePageSubmit = (e?: React.FormEvent) => {
@@ -36,6 +45,42 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
     } else {
       setPageInput(currentPage.toString());
     }
+  };
+
+  // Debounce the page scrubber so rapid dragging doesn't trigger multiple page parses
+  const handleScrubberChange = (val: number) => {
+    setScrubberValue(val);
+    setPageInput(val.toString());
+
+    if (scrubberDebounceRef.current) {
+      clearTimeout(scrubberDebounceRef.current);
+    }
+    scrubberDebounceRef.current = setTimeout(() => {
+      onGoToPage(val);
+    }, 150);
+  };
+
+  // Renders current sentence with live karaoke word highlight
+  const renderKaraokeText = () => {
+    if (!currentTextSnippet) return null;
+    if (!highlightWord || highlightWord.length === 0) {
+      return <span>"{currentTextSnippet}"</span>;
+    }
+
+    const { index, length } = highlightWord;
+    const before = currentTextSnippet.slice(0, index);
+    const word = currentTextSnippet.slice(index, index + length);
+    const after = currentTextSnippet.slice(index + length);
+
+    return (
+      <span>
+        "{before}
+        <span className="bg-indigo-500/30 text-indigo-300 font-bold px-1 py-0.5 rounded shadow-sm border border-indigo-500/40">
+          {word}
+        </span>
+        {after}"
+      </span>
+    );
   };
 
   return (
@@ -99,15 +144,15 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
       {/* Interactive Page Scrubber Slider */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between text-[11px] text-slate-500">
-          <span>Página {currentPage} de {totalPages}</span>
+          <span>Página {scrubberValue} de {totalPages}</span>
           <span className="font-mono text-indigo-400">Arraste para navegar</span>
         </div>
         <input
           type="range"
           min={1}
           max={totalPages}
-          value={currentPage}
-          onChange={(e) => onGoToPage(parseInt(e.target.value, 10))}
+          value={scrubberValue}
+          onChange={(e) => handleScrubberChange(parseInt(e.target.value, 10))}
           disabled={disabled || totalPages <= 1}
           className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400 transition"
         />
@@ -141,15 +186,34 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
         </div>
       </div>
 
-      {/* Text preview card */}
+      {/* Spotify Lyrics Focused View (Previous / Active / Next) */}
       {currentTextSnippet && (
-        <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
-          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">
-            Trecho sendo lido:
-          </span>
-          <p className="text-sm text-slate-200 leading-relaxed italic line-clamp-3">
-            "{currentTextSnippet}"
+        <div className="bg-slate-950/70 p-5 rounded-2xl border border-slate-800/80 space-y-3 transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping inline-block" />
+              Trecho em Foco:
+            </span>
+          </div>
+
+          {/* Previous sentence (dimmed) */}
+          {previousTextSnippet && (
+            <p className="text-xs text-slate-500/70 line-clamp-1 italic select-none">
+              ... {previousTextSnippet}
+            </p>
+          )}
+
+          {/* Active sentence (large, glowing, karaoke word highlight) */}
+          <p className="text-base sm:text-lg text-slate-100 font-medium leading-relaxed tracking-wide select-text">
+            {renderKaraokeText()}
           </p>
+
+          {/* Next sentence (dimmed preview) */}
+          {nextTextSnippet && (
+            <p className="text-xs text-slate-500/70 line-clamp-1 italic select-none">
+              {nextTextSnippet} ...
+            </p>
+          )}
         </div>
       )}
     </div>

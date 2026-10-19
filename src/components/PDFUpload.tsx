@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Upload, FileText, AlertCircle, Loader2 } from 'lucide-react';
+import { Upload, FileText, AlertCircle, Loader2, ShieldCheck } from 'lucide-react';
 import { extractTextFromPDF } from '../core/pdf-parser';
 import { saveDocument } from '../storage/db';
 import type { StoredDocument } from '../types';
@@ -24,7 +24,7 @@ export const PDFUpload: React.FC<PDFUploadProps> = ({ onDocumentLoaded }) => {
     setError(null);
 
     try {
-      const { pages, totalCharacters } = await extractTextFromPDF(file);
+      const { pages, totalCharacters, chapters } = await extractTextFromPDF(file);
 
       if (totalCharacters === 0) {
         setError(
@@ -34,21 +34,23 @@ export const PDFUpload: React.FC<PDFUploadProps> = ({ onDocumentLoaded }) => {
         return;
       }
 
-      const id = await saveDocument(file.name, file.size, pages);
+      const id = await saveDocument(file.name, file.size, pages, chapters);
       const doc: StoredDocument = {
         id,
         fileName: file.name,
         fileSize: file.size,
         totalPages: pages.length,
         pages,
+        chapters,
         createdAt: new Date(),
         updatedAt: new Date(),
       };
 
       onDocumentLoaded(doc);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Error processing PDF:', err);
-      setError('Falha ao processar o arquivo PDF. Verifique se o documento não está corrompido.');
+      const msg = err instanceof Error ? err.message : 'Falha ao processar o arquivo PDF. Verifique se o documento não está corrompido.';
+      setError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -122,6 +124,14 @@ export const PDFUpload: React.FC<PDFUploadProps> = ({ onDocumentLoaded }) => {
           <p className="text-sm">{error}</p>
         </div>
       )}
+
+      {/* Selo de Privacidade Grau Bancário */}
+      <div className="mt-4 flex items-center justify-center gap-2 text-xs text-slate-400 bg-slate-900/60 border border-slate-800/80 rounded-xl px-4 py-2.5">
+        <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+        <span>
+          <strong className="text-slate-200">100% Privado:</strong> Seus livros nunca saem do seu dispositivo. Zero envio para servidores externos.
+        </span>
+      </div>
     </div>
   );
 };

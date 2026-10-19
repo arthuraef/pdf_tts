@@ -129,6 +129,37 @@ export class WebAudioStage {
     }
   }
 
+  /**
+   * Toca um chime sutil e elegante ("Plim!") de confirmação (ex: grifo por fone de ouvido).
+   */
+  public playChime(): void {
+    try {
+      const ctx = this.getAudioContext();
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      const now = ctx.currentTime;
+
+      // Oscilador cristalino com subida harmônica sutil (880 Hz -> 1320 Hz)
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, now);
+      osc.frequency.exponentialRampToValueAtTime(1320, now + 0.12);
+
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+
+      osc.connect(gain);
+      gain.connect(this.masterGain || ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.36);
+    } catch (err) {
+      console.warn('Erro ao reproduzir chime:', err);
+    }
+  }
+
   public destroy(): void {
     this.stopCurrent();
     if (this.audioCtx) {

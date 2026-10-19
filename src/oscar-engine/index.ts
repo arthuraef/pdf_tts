@@ -8,6 +8,7 @@ import { sanitizeDocumentPages } from './sanitizer';
 import { parseTextToActingScores, VOICE_STYLES } from './director';
 import { PrefetchQueue, fallbackNativeTts } from './transport';
 import { webAudioStage, audioBuffersToWavBlob, triggerAudioDownload, breathInjector } from './audio-stage';
+import { splitSentenceUnderLimit } from '../core/text-chunker';
 
 export * from './types';
 export * from './sanitizer';
@@ -19,7 +20,7 @@ export class OscarEngine {
   private config: EngineConfig = {
     bionicPacingEnabled: true,
     spatialAudioEnabled: true,
-    breathInjectionEnabled: true,
+    breathInjectionEnabled: false,
     basePlaybackRate: 1.0,
     voiceStyle: 'dramatic',
     primaryVoice: '',
@@ -33,6 +34,8 @@ export class OscarEngine {
   private currentIndex: number = 0;
   private isPlaying: boolean = false;
   private isPaused: boolean = false;
+  private lastSpokenCharIndex: number = 0;
+  private currentChunkCharOffset: number = 0;
   private prefetchQueue: PrefetchQueue;
 
   constructor(events: EngineStateEvents = {}, config?: Partial<EngineConfig>) {
@@ -157,21 +160,12 @@ export class OscarEngine {
 
       const sentences = pageContent.match(/[^.!?\n]+[.!?\n]*/g) || [pageContent];
       const sentenceStrings: string[] = [];
-      let buffer = '';
 
       for (const s of sentences) {
         const trimmed = s.trim();
         if (!trimmed) continue;
-
-        if ((buffer + ' ' + trimmed).trim().length > 160 && buffer.length > 0) {
-          sentenceStrings.push(buffer.trim());
-          buffer = trimmed;
-        } else {
-          buffer = buffer ? `${buffer} ${trimmed}` : trimmed;
-        }
-      }
-      if (buffer.trim()) {
-        sentenceStrings.push(buffer.trim());
+        const subClauses = splitSentenceUnderLimit(trimmed, 160);
+        sentenceStrings.push(...subClauses);
       }
 
       const pageScoreChunks = parseTextToActingScores(sentenceStrings, {
@@ -211,21 +205,12 @@ export class OscarEngine {
 
       const sentences = pageContent.match(/[^.!?\n]+[.!?\n]*/g) || [pageContent];
       const sentenceStrings: string[] = [];
-      let buffer = '';
 
       for (const s of sentences) {
         const trimmed = s.trim();
         if (!trimmed) continue;
-
-        if ((buffer + ' ' + trimmed).trim().length > 160 && buffer.length > 0) {
-          sentenceStrings.push(buffer.trim());
-          buffer = trimmed;
-        } else {
-          buffer = buffer ? `${buffer} ${trimmed}` : trimmed;
-        }
-      }
-      if (buffer.trim()) {
-        sentenceStrings.push(buffer.trim());
+        const subClauses = splitSentenceUnderLimit(trimmed, 160);
+        sentenceStrings.push(...subClauses);
       }
 
       const pageScoreChunks = parseTextToActingScores(sentenceStrings, {
@@ -265,8 +250,10 @@ export class OscarEngine {
 
     this.isPlaying = true;
     this.isPaused = false;
+    this.lastSpokenCharIndex = 0;
+    this.currentChunkCharOffset = 0;
     this.notifyState();
-    this.playCurrentChunk();
+    this.playCurrentChunk(0);
   }
 
   public pause(): void {
@@ -286,21 +273,24 @@ export class OscarEngine {
     fallbackNativeTts.stop();
     this.isPlaying = false;
     this.isPaused = false;
+    this.lastSpokenCharIndex = 0;
+    this.currentChunkCharOffset = 0;
     this.notifyState();
   }
 
-  public skip(seconds: number): void {
+  /**
+   * Pula exatamente 1 frase/ideia inteira para trás ou para frente.
+   */
+  public skipSentence(direction: -1 | 1): void {
     if (this.scoreChunks.length === 0) return;
 
-    const rate = this.config.basePlaybackRate;
-    const delta = Math.round((seconds * rate) / 5);
-    const step = delta === 0 ? (seconds > 0 ? 1 : -1) : delta;
-
-    const nextIndex = Math.max(0, Math.min(this.scoreChunks.length - 1, this.currentIndex + step));
+    const nextIndex = Math.max(0, Math.min(this.scoreChunks.length - 1, this.currentIndex + direction));
     this.currentIndex = nextIndex;
+    this.lastSpokenCharIndex = 0;
+    this.currentChunkCharOffset = 0;
 
     if (this.isPlaying) {
-      this.playCurrentChunk();
+      this.playCurrentChunk(0);
     } else {
       if (this.scoreChunks[this.currentIndex]) {
         this.events.onChunkStart?.(this.scoreChunks[this.currentIndex]);
@@ -308,18 +298,32 @@ export class OscarEngine {
     }
   }
 
+  public skip(seconds: number): void {
+    this.skipSentence(seconds < 0 ? -1 : 1);
+  }
+
+  /**
+   * Altera a velocidade de reprodução e retoma a fala da palavra exata
+   * onde estava, sem reiniciar a frase do início.
+   */
   public setBasePlaybackRate(rate: number): void {
     this.config.basePlaybackRate = rate;
     if (this.isPlaying && !this.isPaused) {
-      this.playCurrentChunk();
+      const chunk = this.scoreChunks[this.currentIndex];
+      // Se já estava falando a frase, retoma da palavra atual
+      if (chunk && this.lastSpokenCharIndex > 0 && this.lastSpokenCharIndex < chunk.cleanText.length - 3) {
+        this.playCurrentChunk(this.lastSpokenCharIndex);
+      } else {
+        this.playCurrentChunk(0);
+      }
     }
   }
 
   /**
    * Executa o chunk atual aplicando a voz selecionada, modulação de pitch,
-   * velocidade bionic e respiração procedural.
+   * velocidade bionic e retomada precisa por caractere.
    */
-  private playCurrentChunk(): void {
+  private playCurrentChunk(charOffset: number = 0): void {
     if (!this.isPlaying) return;
 
     if (this.currentIndex >= this.scoreChunks.length) {
@@ -331,9 +335,16 @@ export class OscarEngine {
     const chunk = this.scoreChunks[this.currentIndex];
     this.events.onChunkStart?.(chunk);
 
-    // 1. Calcula o pitch baseado no perfil acústico e estilo
+    this.currentChunkCharOffset = charOffset;
+    const textToSpeak = charOffset > 0 ? chunk.cleanText.slice(charOffset).trim() : chunk.cleanText;
+    if (!textToSpeak) {
+      this.handleChunkFinished(100);
+      return;
+    }
+
+    // 1. Modulação de Pitch baseada no papel dramático e estilo
     let pitchMultiplier = 1.0;
-    if (chunk.acoustics.pitchAdjust) {
+    if (this.config.spatialAudioEnabled && chunk.acoustics.pitchAdjust) {
       const match = chunk.acoustics.pitchAdjust.match(/([+-]?\d+)%/);
       if (match) {
         pitchMultiplier = 1.0 + parseInt(match[1], 10) / 100;
@@ -350,14 +361,19 @@ export class OscarEngine {
       (this.config.basePlaybackRate * bionicMultiplier * styleDef.rateMultiplier).toFixed(2)
     );
 
-    // 3. Escolhe a voz adequada para o papel (Narrador ou Personagem em diálogo)
+    // 3. Escolhe a voz adequada para o papel (Teatro 3D alterna vozes em diálogos)
     const isCharacter = chunk.role === 'character_a' || chunk.role === 'character_b';
-    const targetVoice = isCharacter && this.config.secondaryVoice
+    const targetVoice = this.config.spatialAudioEnabled && isCharacter && this.config.secondaryVoice
       ? this.config.secondaryVoice
       : this.config.primaryVoice;
 
-    // 4. Injeta micro-respiração humana se requisitado pelo diretor
-    if (this.config.breathInjectionEnabled && chunk.acoustics.injectBreathBefore && styleDef.breathEnabled) {
+    // 4. Injeta micro-respiração humana apenas se explicitamente habilitado
+    if (
+      this.config.breathInjectionEnabled &&
+      charOffset === 0 &&
+      chunk.acoustics.injectBreathBefore &&
+      styleDef.breathEnabled
+    ) {
       try {
         const ctx = webAudioStage.getAudioContext();
         if (ctx.state === 'running') {
@@ -374,7 +390,7 @@ export class OscarEngine {
 
     // 5. Síntese Neural Nativa com Suporte a Karaokê e Timbre Modulado
     fallbackNativeTts.speak({
-      text: chunk.cleanText,
+      text: textToSpeak,
       voiceURI: targetVoice,
       rate: effectiveRate,
       pitch: effectivePitch,
@@ -382,14 +398,19 @@ export class OscarEngine {
         this.events.onNetworkFallback?.(false);
       },
       onEnd: () => {
+        this.lastSpokenCharIndex = 0;
+        this.currentChunkCharOffset = 0;
         this.handleChunkFinished(effectivePause);
       },
       onError: (err) => {
         console.warn('Erro na síntese neural:', err);
+        this.lastSpokenCharIndex = 0;
+        this.currentChunkCharOffset = 0;
         this.handleChunkFinished(200);
       },
-      onWordBoundary: (charIndex, charLength) => {
-        this.events.onWordBoundary?.(charIndex, charLength);
+      onWordBoundary: (subCharIndex, charLength) => {
+        this.lastSpokenCharIndex = this.currentChunkCharOffset + subCharIndex;
+        this.events.onWordBoundary?.(this.lastSpokenCharIndex, charLength);
       },
     });
   }

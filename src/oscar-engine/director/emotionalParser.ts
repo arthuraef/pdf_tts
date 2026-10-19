@@ -18,25 +18,25 @@ export const VOICE_STYLES: Record<VoiceStyle, VoiceStyleDefinition> = {
     pitchMultiplier: 1.0,
     pauseMsMultiplier: 1.0,
     rateMultiplier: 1.0,
-    breathEnabled: true,
+    breathEnabled: false,
   },
   dramatic: {
     id: 'dramatic',
     label: 'Dramático & Expressivo',
     emoji: '🎭',
-    description: 'Atuação teatral com emoção intensa, sussurros e exclamações marcantes.',
-    pitchMultiplier: 1.15,
-    pauseMsMultiplier: 1.5,
-    rateMultiplier: 0.92,
-    breathEnabled: true,
+    description: 'Atuação teatral expressiva com cadência envolvente sem distorção.',
+    pitchMultiplier: 1.04,
+    pauseMsMultiplier: 1.15,
+    rateMultiplier: 0.96,
+    breathEnabled: false,
   },
   didactic: {
     id: 'didactic',
     label: 'Concurso & Didático',
     emoji: '🎓',
     description: 'Dicção firme, pausada e focada para memorização de leis e apostilas.',
-    pitchMultiplier: 0.90,
-    pauseMsMultiplier: 0.85,
+    pitchMultiplier: 0.98,
+    pauseMsMultiplier: 0.95,
     rateMultiplier: 1.02,
     breathEnabled: false,
   },
@@ -44,21 +44,21 @@ export const VOICE_STYLES: Record<VoiceStyle, VoiceStyleDefinition> = {
     id: 'dynamic',
     label: 'Dinâmico & Bionic Flow',
     emoji: '⚡',
-    description: 'Velocidade acelerada e transições rápidas para quem tem pressa.',
-    pitchMultiplier: 1.08,
-    pauseMsMultiplier: 0.5,
-    rateMultiplier: 1.25,
+    description: 'Velocidade acelerada e transições ágeis para audição eficiente.',
+    pitchMultiplier: 1.02,
+    pauseMsMultiplier: 0.8,
+    rateMultiplier: 1.12,
     breathEnabled: false,
   },
   calm: {
     id: 'calm',
     label: 'Calmo & Noturno',
     emoji: '🧘',
-    description: 'Ritmo suave e voz macia, ideal para descanso e relaxamento.',
-    pitchMultiplier: 0.85,
-    pauseMsMultiplier: 1.6,
-    rateMultiplier: 0.85,
-    breathEnabled: true,
+    description: 'Ritmo suave e voz macia, agradável para descanso e concentração.',
+    pitchMultiplier: 0.96,
+    pauseMsMultiplier: 1.15,
+    rateMultiplier: 0.95,
+    breathEnabled: false,
   },
 };
 
@@ -130,21 +130,21 @@ export function parseTextToActingScores(
 
     // 2. Modulação Emocional de Prosódia & Acústica
     const rawBionic = bionicEnabled ? calculateBionicSpeedMultiplier(cleanText) : 1.0;
-    const effectiveBionic = parseFloat((rawBionic * currentStyle.rateMultiplier).toFixed(2));
+    const effectiveBionic = parseFloat(rawBionic.toFixed(2));
 
     let basePause = 300;
     let pitchStr = '+0Hz';
     let rateStr = '+0%';
-    let shouldBreath = currentStyle.breathEnabled;
+    let shouldBreath = false;
 
     if (role === 'heading') {
-      pitchStr = '-6%';
-      rateStr = '-8%';
-      basePause = 1200;
+      pitchStr = '-3%';
+      rateStr = '-5%';
+      basePause = 800;
       shouldBreath = false;
     } else if (role === 'aside') {
-      pitchStr = '-3%';
-      rateStr = '+10%';
+      pitchStr = '-2%';
+      rateStr = '+5%';
       basePause = 250;
     } else {
       // Exclamação ou urgência
@@ -152,9 +152,9 @@ export function parseTextToActingScores(
         cleanText.endsWith('!') ||
         /\b(?:gritou|socorro|correu|depressa|perigo|rápido|fogo)\b/i.test(cleanText)
       ) {
-        pitchStr = voiceStyle === 'dramatic' ? '+10%' : '+5%';
-        rateStr = '+12%';
-        shouldBreath = true;
+        pitchStr = voiceStyle === 'dramatic' ? '+4%' : '+2%';
+        rateStr = '+5%';
+        shouldBreath = false;
         basePause = 350;
       }
       // Reticências ou calmaria
@@ -162,15 +162,10 @@ export function parseTextToActingScores(
         cleanText.endsWith('...') ||
         /\b(?:sussurrou|silêncio|triste|calma|pensou)\b/i.test(cleanText)
       ) {
-        pitchStr = '-5%';
-        rateStr = '-10%';
-        basePause = 650;
+        pitchStr = '-3%';
+        rateStr = '-5%';
+        basePause = 500;
       }
-    }
-
-    // Se o texto for longo (> 120 caracteres) e o estilo permitir respiração
-    if (cleanText.length > 120 && role !== 'heading' && currentStyle.breathEnabled) {
-      shouldBreath = true;
     }
 
     const acoustics: AcousticProfile = {

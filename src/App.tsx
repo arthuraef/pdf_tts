@@ -6,6 +6,9 @@ import { ProgressBar } from './components/ProgressBar';
 import { OscarControls } from './components/OscarControls';
 import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { LibraryModal } from './components/LibraryModal';
+import { PocketModeModal } from './components/PocketModeModal';
+import { ChapterDrawer } from './components/ChapterDrawer';
+import { HighlightsModal } from './components/HighlightsModal';
 import { useTTS } from './hooks/useTTS';
 import { useOscarEngine } from './hooks/useOscarEngine';
 import { useMediaSession } from './hooks/useMediaSession';
@@ -16,6 +19,9 @@ export function App() {
   const [activeDoc, setActiveDoc] = useState<StoredDocument | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+  const [isPocketModeOpen, setIsPocketModeOpen] = useState(false);
+  const [isChaptersOpen, setIsChaptersOpen] = useState(false);
+  const [isHighlightsOpen, setIsHighlightsOpen] = useState(false);
   const [isOscarMode, setIsOscarMode] = useState(true);
 
   // Restore existing document from IndexedDB on startup
@@ -37,6 +43,13 @@ export function App() {
   // Unifica a interface do motor ativo
   const active = isOscarMode ? oscar : native;
 
+  // Cálculo de tempo estimado de conclusão em minutos
+  const wordsRemaining = (activeDoc?.pages.slice(active.currentPage - 1) || []).reduce(
+    (acc, p) => acc + p.text.split(/\s+/).filter(Boolean).length,
+    0
+  );
+  const estimatedMinutes = wordsRemaining > 0 ? Math.max(1, Math.ceil(wordsRemaining / (150 * active.rate))) : 0;
+
   // Sync background playback and lockscreen media controls
   useMediaSession({
     document: activeDoc,
@@ -51,6 +64,7 @@ export function App() {
     resume: active.resume,
     skipBackward: active.skipBackward,
     skipForward: active.skipForward,
+    onHighlight: oscar.highlightCurrent,
   });
 
   const handleDocumentLoaded = (doc: StoredDocument) => {
@@ -209,18 +223,21 @@ export function App() {
               disabled={active.totalChunks === 0}
             />
 
-            {/* Visual Progress Bar & Current Text */}
+            {/* Visual Progress Bar & Spotify-lyrics focused view */}
             <ProgressBar
               currentPage={active.currentPage}
               totalPages={activeDoc.totalPages}
               currentChunkIndex={active.currentChunkIndex}
               totalChunks={active.totalChunks}
               currentTextSnippet={active.currentChunkText}
+              previousTextSnippet={isOscarMode ? oscar.previousChunkText : undefined}
+              nextTextSnippet={isOscarMode ? oscar.nextChunkText : undefined}
+              highlightWord={isOscarMode ? oscar.highlightWord : null}
               onGoToPage={active.goToPage}
               disabled={active.totalChunks === 0}
             />
 
-            {/* Audio Controls (Play, Pause, Skip ±10s, Rate) */}
+            {/* Audio Controls (Play, Pause, Skip ±1 Frase, Rate, Pocket Mode, Highlights, Chapters) */}
             <PlayerControls
               isPlaying={active.isPlaying}
               isPaused={active.isPaused}
@@ -236,11 +253,58 @@ export function App() {
               voices={!isOscarMode ? native.voiceOptions : []}
               selectedVoiceId={!isOscarMode ? native.selectedVoiceId : ''}
               onVoiceChange={!isOscarMode ? native.setVoice : () => {}}
+              estimatedMinutes={estimatedMinutes}
+              onTogglePocketMode={() => setIsPocketModeOpen(true)}
+              onHighlightCurrent={isOscarMode ? oscar.highlightCurrent : undefined}
+              hasChapters={Boolean(activeDoc.chapters && activeDoc.chapters.length > 0)}
+              onOpenChapters={() => setIsChaptersOpen(true)}
+              onOpenHighlights={() => setIsHighlightsOpen(true)}
               disabled={active.totalChunks === 0}
             />
           </div>
         )}
       </main>
+
+      {/* Pocket Mode Modal (AMOLED) */}
+      {activeDoc && (
+        <PocketModeModal
+          isOpen={isPocketModeOpen}
+          onClose={() => setIsPocketModeOpen(false)}
+          title={activeDoc.fileName}
+          currentPage={active.currentPage}
+          totalPages={activeDoc.totalPages}
+          currentText={active.currentChunkText}
+          isPlaying={active.isPlaying}
+          isPaused={active.isPaused}
+          estimatedMinutes={estimatedMinutes}
+          onPlayToggle={() => {
+            if (active.isPlaying) active.pause();
+            else active.resume();
+          }}
+          onSkipBackward={active.skipBackward}
+          onSkipForward={active.skipForward}
+          onHighlight={oscar.highlightCurrent}
+        />
+      )}
+
+      {/* Chapters Outline Drawer */}
+      {activeDoc?.chapters && (
+        <ChapterDrawer
+          isOpen={isChaptersOpen}
+          onClose={() => setIsChaptersOpen(false)}
+          chapters={activeDoc.chapters}
+          currentPage={active.currentPage}
+          onSelectChapter={active.goToPage}
+        />
+      )}
+
+      {/* Highlights Modal */}
+      <HighlightsModal
+        isOpen={isHighlightsOpen}
+        onClose={() => setIsHighlightsOpen(false)}
+        docId={activeDoc?.id}
+        onJumpToPage={active.goToPage}
+      />
 
       {/* Library Modal */}
       <LibraryModal

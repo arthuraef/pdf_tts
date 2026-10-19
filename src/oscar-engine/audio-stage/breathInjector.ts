@@ -53,18 +53,22 @@ export class BreathInjector {
   }
 
   /**
-   * Toca a micro-respiração 250ms antes do início da fala.
+   * Toca a micro-respiração de forma ultra-suave e filtrada.
    */
   public playBreath(audioCtx: AudioContext, destination: AudioNode): void {
     try {
       const buffer = this.getOrCreateBreathBuffer(audioCtx);
       const source = audioCtx.createBufferSource();
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(320, audioCtx.currentTime); // Apenas frequências baixas/médias de ar suave
+
       const gainNode = audioCtx.createGain();
+      gainNode.gain.setValueAtTime(0.02, audioCtx.currentTime); // Volume ultra-discreto (2%), sem estalo
 
-      gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime); // Volume discreto a 20%
       source.buffer = buffer;
-
-      source.connect(gainNode);
+      source.connect(filter);
+      filter.connect(gainNode);
       gainNode.connect(destination);
 
       source.start();

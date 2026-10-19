@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { StoredDocument, PlaybackState, DocumentWithProgress } from '../types';
+import type { StoredDocument, PlaybackState, DocumentWithProgress, BookHighlight, ChapterOutlineItem } from '../types';
 
 export interface AudioCacheItem {
   id: string; // Hash único do chunk
@@ -14,6 +14,7 @@ export class PDFVoiceDatabase extends Dexie {
   documents!: Table<StoredDocument, number>;
   playbackStates!: Table<PlaybackState, number>;
   audioCache!: Table<AudioCacheItem, string>;
+  highlights!: Table<BookHighlight, number>;
 
   constructor() {
     super('PDFVoiceDB');
@@ -25,6 +26,12 @@ export class PDFVoiceDatabase extends Dexie {
       documents: '++id, fileName, updatedAt',
       playbackStates: '++id, docId, updatedAt',
       audioCache: 'id, docId, pageNumber, timestamp',
+    });
+    this.version(3).stores({
+      documents: '++id, fileName, updatedAt',
+      playbackStates: '++id, docId, updatedAt',
+      audioCache: 'id, docId, pageNumber, timestamp',
+      highlights: '++id, docId, pageNumber, createdAt',
     });
   }
 }
@@ -57,7 +64,8 @@ export function setActiveDocId(id: number | null): void {
 export async function saveDocument(
   fileName: string,
   fileSize: number,
-  pages: { pageNumber: number; text: string }[]
+  pages: { pageNumber: number; text: string }[],
+  chapters?: ChapterOutlineItem[]
 ): Promise<number> {
   // Check if a document with the exact same name and size already exists
   const existing = await db.documents
@@ -71,6 +79,7 @@ export async function saveDocument(
     fileSize,
     totalPages: pages.length,
     pages,
+    chapters: chapters && chapters.length > 0 ? chapters : undefined,
     createdAt: existing ? existing.createdAt : new Date(),
     updatedAt: new Date(),
   };
@@ -240,5 +249,41 @@ export async function clearAudioCacheForDoc(docId: number): Promise<void> {
   } catch (err) {
     console.warn('Erro ao limpar cache de áudio do doc:', err);
   }
+}
+
+/**
+ * Salva frase grifada/favoritada pelo fone ou botão.
+ */
+export async function saveHighlight(
+  docId: number,
+  pageNumber: number,
+  chunkIndex: number,
+  text: string
+): Promise<number> {
+  return await db.highlights.add({
+    docId,
+    pageNumber,
+    chunkIndex,
+    text,
+    createdAt: new Date(),
+  });
+}
+
+/**
+ * Retorna todos os grifos de um livro ordenados por data.
+ */
+export async function getHighlightsForDoc(docId: number): Promise<BookHighlight[]> {
+  try {
+    return await db.highlights.where('docId').equals(docId).reverse().sortBy('createdAt');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Remove um grifo salvo.
+ */
+export async function deleteHighlight(id: number): Promise<void> {
+  await db.highlights.delete(id);
 }
 

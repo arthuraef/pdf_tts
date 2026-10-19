@@ -8,6 +8,7 @@ import { VOICE_STYLES, parseTextToActingScores } from '../src/oscar-engine/direc
 import { calculateBionicSpeedMultiplier } from '../src/oscar-engine/director/bionicSpeed.ts';
 import { FallbackNativeTts } from '../src/oscar-engine/transport/fallbackNativeTts.ts';
 import { OscarEngine } from '../src/oscar-engine/index.ts';
+import { splitSentenceUnderLimit } from '../src/core/text-chunker.ts';
 
 // ---------------------------------------------------------------------------
 // 1. Sanitizer Tests
@@ -231,11 +232,33 @@ test('OscarEngine: Document loading, chunk parsing, and voice style switching', 
   assert.equal(engine.getConfig().voiceStyle, 'dramatic');
   assert.ok(dramaticChunks.length >= 2);
 
-  // Test skipping
-  engine.skip(10);
-  assert.ok(engine.getCurrentIndex() >= 0);
+  // Test skipSentence
+  engine.skipSentence(1);
+  assert.equal(engine.getCurrentIndex(), 1);
+  engine.skipSentence(-1);
+  assert.equal(engine.getCurrentIndex(), 0);
 
   // Test rate change
   engine.setBasePlaybackRate(1.5);
   assert.equal(engine.getConfig().basePlaybackRate, 1.5);
+});
+
+// ---------------------------------------------------------------------------
+// 5. Chrome 15s Freeze Protection: splitSentenceUnderLimit Tests
+// ---------------------------------------------------------------------------
+test('TextChunker: splitSentenceUnderLimit ensures sentences stay strictly under 160 characters', () => {
+  const longLegalSentence =
+    'Artigo 5º Todos são iguais perante a lei, sem distinção de qualquer natureza, garantindo-se aos brasileiros e aos estrangeiros residentes no País a inviolabilidade do direito à vida; à liberdade, à igualdade, à segurança e à propriedade, nos termos seguintes: homens e mulheres são iguais em direitos e obrigações.';
+
+  assert.ok(longLegalSentence.length > 160);
+
+  const subClauses = splitSentenceUnderLimit(longLegalSentence, 160);
+  assert.ok(subClauses.length >= 2);
+
+  subClauses.forEach((clause: string) => {
+    assert.ok(
+      clause.length <= 160,
+      `Sub-cláusula excede 160 caracteres (${clause.length}): "${clause}"`
+    );
+  });
 });

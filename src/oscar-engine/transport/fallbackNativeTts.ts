@@ -199,6 +199,9 @@ export class FallbackNativeTts {
         if (this.currentUtterance === utterance) {
           this.currentUtterance = null;
         }
+        if (typeof window !== 'undefined') {
+          (window as unknown as { __currentUtterance?: SpeechSynthesisUtterance | null }).__currentUtterance = null;
+        }
         options.onEnd?.();
       };
 
@@ -206,6 +209,9 @@ export class FallbackNativeTts {
         this.stopKeepAlive();
         if (this.currentUtterance === utterance) {
           this.currentUtterance = null;
+        }
+        if (typeof window !== 'undefined') {
+          (window as unknown as { __currentUtterance?: SpeechSynthesisUtterance | null }).__currentUtterance = null;
         }
         if (e.error !== 'canceled' && e.error !== 'interrupted') {
           console.warn('[FallbackNativeTts] Utterance error:', e.error);
@@ -222,8 +228,11 @@ export class FallbackNativeTts {
         };
       }
 
-      // Retain utterance in instance property to protect from V8 garbage collection mid-speech
+      // Retain utterance in instance property and window global to protect from V8 garbage collection mid-speech
       this.currentUtterance = utterance;
+      if (typeof window !== 'undefined') {
+        (window as unknown as { __currentUtterance?: SpeechSynthesisUtterance | null }).__currentUtterance = utterance;
+      }
 
       try {
         this.synth.speak(utterance);

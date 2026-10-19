@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { OscarEngine } from '../oscar-engine';
+import { OscarEngine, webAudioStage } from '../oscar-engine';
 import { VOICE_STYLES } from '../oscar-engine/director/emotionalParser';
 import type { ActingScoreChunk, VoiceStyle, VoiceStyleDefinition } from '../oscar-engine/types';
-import { savePlaybackProgress, getPlaybackProgress } from '../storage/db';
+import { savePlaybackProgress, getPlaybackProgress, saveHighlight } from '../storage/db';
 import type { StoredDocument, VoiceOption } from '../types';
 
 export function useOscarEngine(document: StoredDocument | null) {
@@ -18,7 +18,7 @@ export function useOscarEngine(document: StoredDocument | null) {
   // Flags dos superpoderes do Oscar Engine
   const [bionicEnabled, setBionicEnabled] = useState(true);
   const [spatialAudioEnabled, setSpatialAudioEnabled] = useState(true);
-  const [breathEnabled, setBreathEnabled] = useState(true);
+  const [breathEnabled, setBreathEnabled] = useState(false);
 
   // Seleção de Estilo de Voz e Vozes
   const [voiceStyle, setVoiceStyleState] = useState<VoiceStyle>('dramatic');
@@ -165,12 +165,51 @@ export function useOscarEngine(document: StoredDocument | null) {
     }
   }, [document]);
 
-  // ---- Salva progresso no IndexedDB ------------------------------------
+  // ---- Salva progresso no IndexedDB com throttling inteligente --------
+  const lastSavedPageRef = useRef<number>(-1);
+  const currentChunk = chunks[currentChunkIndex];
+  const currentPage = currentChunk ? currentChunk.pageNumber : 1;
+
+  // 1. Salva ao trocar de página
   useEffect(() => {
     if (document?.id && chunks.length > 0) {
+      if (currentPage !== lastSavedPageRef.current) {
+        lastSavedPageRef.current = currentPage;
+        savePlaybackProgress(document.id, currentPage - 1, currentChunkIndex, rate);
+      }
+    }
+  }, [document?.id, currentPage, currentChunkIndex, rate, chunks.length]);
+
+  // 2. Salva ao pausar ou parar
+  useEffect(() => {
+    if (document?.id && !isPlaying && chunks.length > 0) {
       const cur = chunks[currentChunkIndex];
       savePlaybackProgress(document.id, (cur?.pageNumber ?? 1) - 1, currentChunkIndex, rate);
     }
+  }, [isPlaying, document?.id, currentChunkIndex, rate, chunks]);
+
+  // 3. Salva ao minimizar app ou fechar aba (evita I/O constante a cada palavra)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document?.id && window.document.visibilityState === 'hidden' && chunks.length > 0) {
+        const cur = chunks[currentChunkIndex];
+        savePlaybackProgress(document.id, (cur?.pageNumber ?? 1) - 1, currentChunkIndex, rate);
+      }
+    };
+    const handleUnload = () => {
+      if (document?.id && chunks.length > 0) {
+        const cur = chunks[currentChunkIndex];
+        savePlaybackProgress(document.id, (cur?.pageNumber ?? 1) - 1, currentChunkIndex, rate);
+      }
+    };
+
+    window.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('beforeunload', handleUnload);
+
+    return () => {
+      window.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('beforeunload', handleUnload);
+    };
   }, [document?.id, currentChunkIndex, rate, chunks]);
 
   // ---- Controles Públicos ----------------------------------------------
@@ -203,18 +242,27 @@ export function useOscarEngine(document: StoredDocument | null) {
 
   const handleSkipBackward = useCallback(() => {
     setIsFinished(false);
-    engineRef.current?.skip(-10);
+    engineRef.current?.skipSentence(-1);
     if (engineRef.current) {
       setCurrentChunkIndex(engineRef.current.getCurrentIndex());
     }
   }, []);
 
   const handleSkipForward = useCallback(() => {
-    engineRef.current?.skip(10);
+    engineRef.current?.skipSentence(1);
     if (engineRef.current) {
       setCurrentChunkIndex(engineRef.current.getCurrentIndex());
     }
   }, []);
+
+  const handleHighlightCurrent = useCallback(async () => {
+    if (!document?.id || chunks.length === 0) return;
+    const cur = chunks[currentChunkIndex];
+    if (!cur) return;
+
+    webAudioStage.playChime();
+    await saveHighlight(document.id, cur.pageNumber, currentChunkIndex, cur.cleanText);
+  }, [document?.id, chunks, currentChunkIndex]);
 
   const handleJumpToPage = useCallback(
     (targetPage1Based: number) => {
@@ -284,8 +332,6 @@ export function useOscarEngine(document: StoredDocument | null) {
     engineRef.current?.preview(`Demonstração do estilo ${styleDef.label}.`, selectedVoiceId, style);
   }, [selectedVoiceId]);
 
-  const currentChunk = chunks[currentChunkIndex];
-  const currentPage = currentChunk ? currentChunk.pageNumber : 1;
   const voiceStylesList: VoiceStyleDefinition[] = Object.values(VOICE_STYLES);
 
   return {
@@ -298,6 +344,8 @@ export function useOscarEngine(document: StoredDocument | null) {
     totalChunks: chunks.length,
     currentPage,
     currentChunkText: currentChunk?.cleanText || '',
+    previousChunkText: currentChunkIndex > 0 ? chunks[currentChunkIndex - 1]?.cleanText : undefined,
+    nextChunkText: currentChunkIndex < chunks.length - 1 ? chunks[currentChunkIndex + 1]?.cleanText : undefined,
     currentChunkRole: currentChunk?.role || 'narrator',
     currentVoiceId: selectedVoiceId || currentChunk?.voiceId || 'pt-BR-FranciscaNeural',
     highlightWord,
@@ -323,6 +371,7 @@ export function useOscarEngine(document: StoredDocument | null) {
     skipForward: handleSkipForward,
     goToPage: handleJumpToPage,
     setRate: handleRateChange,
+    highlightCurrent: handleHighlightCurrent,
     exportAudio: handleExportAudio,
   };
 }

@@ -14,6 +14,7 @@ interface MediaSessionProps {
   resume: () => void;
   skipBackward: () => void;
   skipForward: () => void;
+  onHighlight?: () => void;
 }
 
 export function useMediaSession({
@@ -29,10 +30,12 @@ export function useMediaSession({
   resume,
   skipBackward,
   skipForward,
+  onHighlight,
 }: MediaSessionProps) {
   // Keep references to latest callbacks so event listeners don't become stale
-  const callbacksRef = useRef({ play, pause, resume, skipBackward, skipForward, isPaused });
-  callbacksRef.current = { play, pause, resume, skipBackward, skipForward, isPaused };
+  const callbacksRef = useRef({ play, pause, resume, skipBackward, skipForward, onHighlight, isPaused });
+  callbacksRef.current = { play, pause, resume, skipBackward, skipForward, onHighlight, isPaused };
+  const lastPlayTapTimeRef = useRef<number>(0);
 
   // Register MediaSession actions
   useEffect(() => {
@@ -40,6 +43,15 @@ export function useMediaSession({
 
     const actionHandlers: [MediaSessionAction, MediaSessionActionHandler][] = [
       ['play', () => {
+        const now = Date.now();
+        // Detecção de clique duplo rápido no fone de ouvido (< 450ms) -> Grifar Frase (Plim!)
+        if (now - lastPlayTapTimeRef.current < 450 && callbacksRef.current.onHighlight) {
+          callbacksRef.current.onHighlight();
+          lastPlayTapTimeRef.current = 0;
+          return;
+        }
+        lastPlayTapTimeRef.current = now;
+
         if (callbacksRef.current.isPaused) {
           callbacksRef.current.resume();
         } else {
