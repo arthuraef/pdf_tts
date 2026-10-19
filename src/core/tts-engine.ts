@@ -17,6 +17,8 @@ export class TTSEngine {
   private isPlaying: boolean = false;
   private isPaused: boolean = false;
   private keepAliveTimer: number | null = null;
+  private speakTimeout: number | null = null;
+  private activeUtterance: SpeechSynthesisUtterance | null = null;
   private callbacks: TTSEventCallbacks = {};
 
   constructor(callbacks: TTSEventCallbacks = {}) {
@@ -31,18 +33,26 @@ export class TTSEngine {
     if (!this.synth) return;
 
     const handleVoices = () => {
-      const voices = this.getPortugueseVoices();
-      if (voices.length > 0 && !this.selectedVoiceURI) {
-        // Automatically select the best quality voice
-        this.selectedVoiceURI = voices[0].voiceURI;
+      try {
+        const voices = this.getPortugueseVoices();
+        if (voices.length > 0 && !this.selectedVoiceURI) {
+          // Automatically select the best quality voice
+          this.selectedVoiceURI = voices[0].voiceURI;
+        }
+        this.callbacks.onVoicesLoaded?.(voices);
+      } catch (err) {
+        console.warn('[TTSEngine] handleVoices error:', err);
       }
-      this.callbacks.onVoicesLoaded?.(voices);
     };
 
     handleVoices();
 
-    if (typeof this.synth.onvoiceschanged !== 'undefined') {
-      this.synth.onvoiceschanged = handleVoices;
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.addEventListener('voiceschanged', handleVoices);
+      } catch {
+        this.synth.onvoiceschanged = handleVoices;
+      }
     }
   }
 
@@ -166,10 +176,19 @@ export class TTSEngine {
   }
 
   public stop() {
+    if (this.speakTimeout !== null) {
+      window.clearTimeout(this.speakTimeout);
+      this.speakTimeout = null;
+    }
     this.clearKeepAlive();
     if (this.synth) {
-      this.synth.cancel();
+      try {
+        this.synth.cancel();
+      } catch {
+        // ignore
+      }
     }
+    this.activeUtterance = null;
     this.isPlaying = false;
     this.isPaused = false;
     this.notifyState();
@@ -193,7 +212,26 @@ export class TTSEngine {
   private speakCurrentChunk() {
     if (!this.synth) return;
 
-    this.synth.cancel();
+    if (this.speakTimeout !== null) {
+      window.clearTimeout(this.speakTimeout);
+      this.speakTimeout = null;
+    }
+
+    if (this.synth.paused) {
+      try {
+        this.synth.resume();
+      } catch {
+        // ignore
+      }
+    }
+
+    if (this.synth.speaking || this.synth.pending) {
+      try {
+        this.synth.cancel();
+      } catch {
+        // ignore
+      }
+    }
 
     if (this.currentIndex >= this.chunks.length) {
       this.stop();
@@ -201,52 +239,72 @@ export class TTSEngine {
       return;
     }
 
-    const chunk = this.chunks[this.currentIndex];
-    const utterance = new SpeechSynthesisUtterance(chunk.text);
-    utterance.rate = this.playbackRate;
+    // Chromium micro-turn delay so cancellation settles
+    this.speakTimeout = window.setTimeout(() => {
+      if (!this.synth || !this.isPlaying || this.isPaused) return;
 
-    // Pick selected voice or top ranked PT voice
-    const ptVoices = this.getPortugueseVoices();
-    let chosenVoice: SpeechSynthesisVoice | undefined;
+      const chunk = this.chunks[this.currentIndex];
+      if (!chunk) return;
 
-    if (this.selectedVoiceURI) {
-      chosenVoice = ptVoices.find((v) => v.voiceURI === this.selectedVoiceURI);
-    }
+      const utterance = new SpeechSynthesisUtterance(chunk.text);
+      utterance.rate = this.playbackRate;
 
-    if (!chosenVoice && ptVoices.length > 0) {
-      chosenVoice = ptVoices[0];
-      this.selectedVoiceURI = chosenVoice.voiceURI;
-    }
+      // Pick selected voice or top ranked PT voice
+      const ptVoices = this.getPortugueseVoices();
+      let chosenVoice: SpeechSynthesisVoice | undefined;
 
-    if (chosenVoice) {
-      utterance.voice = chosenVoice;
-      utterance.lang = chosenVoice.lang;
-    }
+      if (this.selectedVoiceURI) {
+        chosenVoice = ptVoices.find((v) => v.voiceURI === this.selectedVoiceURI);
+      }
 
-    utterance.onstart = () => {
-      this.callbacks.onChunkStart?.(this.currentIndex);
-    };
+      if (!chosenVoice && ptVoices.length > 0) {
+        chosenVoice = ptVoices[0];
+        this.selectedVoiceURI = chosenVoice.voiceURI;
+      }
 
-    utterance.onend = () => {
-      if (this.isPlaying && !this.isPaused) {
-        this.currentIndex++;
-        if (this.currentIndex < this.chunks.length) {
-          this.speakCurrentChunk();
-        } else {
-          this.stop();
-          this.callbacks.onEnd?.();
+      if (chosenVoice) {
+        utterance.voice = chosenVoice;
+        utterance.lang = chosenVoice.lang;
+      } else {
+        utterance.lang = 'pt-BR';
+      }
+
+      utterance.onstart = () => {
+        this.callbacks.onChunkStart?.(this.currentIndex);
+      };
+
+      utterance.onend = () => {
+        if (this.activeUtterance === utterance) {
+          this.activeUtterance = null;
         }
-      }
-    };
+        if (this.isPlaying && !this.isPaused) {
+          this.currentIndex++;
+          if (this.currentIndex < this.chunks.length) {
+            this.speakCurrentChunk();
+          } else {
+            this.stop();
+            this.callbacks.onEnd?.();
+          }
+        }
+      };
 
-    utterance.onerror = (e) => {
-      if (e.error !== 'interrupted' && e.error !== 'canceled') {
-        console.error('TTS Utterance Error:', e);
-        this.callbacks.onError?.(e);
-      }
-    };
+      utterance.onerror = (e) => {
+        if (this.activeUtterance === utterance) {
+          this.activeUtterance = null;
+        }
+        if (e.error !== 'interrupted' && e.error !== 'canceled') {
+          console.error('[TTSEngine] Utterance Error:', e);
+          this.callbacks.onError?.(e);
+        }
+      };
 
-    this.synth.speak(utterance);
+      this.activeUtterance = utterance;
+      try {
+        this.synth.speak(utterance);
+      } catch (err) {
+        console.error('[TTSEngine] synth.speak error:', err);
+      }
+    }, 40);
   }
 
   private startKeepAlive() {

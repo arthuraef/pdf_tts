@@ -39,6 +39,7 @@ export function useOscarEngine(document: StoredDocument | null) {
       else if (/google/i.test(v.name)) label = 'Google Brasil (Online)';
       else if (/luciana/i.test(v.name)) label = 'Luciana (Natural)';
       else if (/felipe/i.test(v.name)) label = 'Felipe (Natural)';
+      else if (/leticia/i.test(v.name)) label = 'Leticia (Natural)';
 
       return {
         id: v.voiceURI,
@@ -48,11 +49,17 @@ export function useOscarEngine(document: StoredDocument | null) {
     });
 
     setAvailableVoices(formatted);
-    if (formatted.length > 0 && !selectedVoiceId) {
-      setSelectedVoiceId(formatted[0].id);
-      engineRef.current.setPrimaryVoice(formatted[0].id);
-    }
-  }, [selectedVoiceId]);
+    setSelectedVoiceId((prev) => {
+      if (prev && formatted.some((f) => f.id === prev)) {
+        return prev;
+      }
+      if (formatted.length > 0) {
+        engineRef.current?.setPrimaryVoice(formatted[0].id);
+        return formatted[0].id;
+      }
+      return '';
+    });
+  }, []);
 
   // ---- Inicializa o Oscar Engine no mount -------------------------------
   useEffect(() => {
@@ -92,11 +99,15 @@ export function useOscarEngine(document: StoredDocument | null) {
     );
 
     updateVoiceList();
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.onvoiceschanged = updateVoiceList;
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.addEventListener('voiceschanged', updateVoiceList);
     }
 
     return () => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.removeEventListener('voiceschanged', updateVoiceList);
+      }
       engineRef.current?.stop();
     };
   }, []);
@@ -108,10 +119,8 @@ export function useOscarEngine(document: StoredDocument | null) {
       spatialAudioEnabled: spatialAudioEnabled,
       breathInjectionEnabled: breathEnabled,
       basePlaybackRate: rate,
-      voiceStyle,
-      primaryVoice: selectedVoiceId,
     });
-  }, [bionicEnabled, spatialAudioEnabled, breathEnabled, rate, voiceStyle, selectedVoiceId]);
+  }, [bionicEnabled, spatialAudioEnabled, breathEnabled, rate]);
 
   // ---- Carrega Documento no Engine --------------------------------------
   useEffect(() => {
@@ -266,6 +275,15 @@ export function useOscarEngine(document: StoredDocument | null) {
     return null;
   }, [chunks, currentChunkIndex]);
 
+  const handlePreviewVoice = useCallback((voiceURI: string) => {
+    engineRef.current?.preview('Olá! Esta é uma demonstração desta voz neural.', voiceURI, voiceStyle);
+  }, [voiceStyle]);
+
+  const handlePreviewStyle = useCallback((style: VoiceStyle) => {
+    const styleDef = VOICE_STYLES[style] || VOICE_STYLES.classic;
+    engineRef.current?.preview(`Demonstração do estilo ${styleDef.label}.`, selectedVoiceId, style);
+  }, [selectedVoiceId]);
+
   const currentChunk = chunks[currentChunkIndex];
   const currentPage = currentChunk ? currentChunk.pageNumber : 1;
   const voiceStylesList: VoiceStyleDefinition[] = Object.values(VOICE_STYLES);
@@ -292,6 +310,8 @@ export function useOscarEngine(document: StoredDocument | null) {
     selectedVoiceId,
     setVoiceStyle: handleVoiceStyleChange,
     setVoice: handleVoiceChange,
+    previewVoice: handlePreviewVoice,
+    previewStyle: handlePreviewStyle,
     toggleBionic: () => setBionicEnabled((prev) => !prev),
     toggleSpatialAudio: () => setSpatialAudioEnabled((prev) => !prev),
     toggleBreath: () => setBreathEnabled((prev) => !prev),

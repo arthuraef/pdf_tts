@@ -52,6 +52,19 @@ export class OscarEngine {
         }
       }
     }
+
+    // Atualiza automaticamente quando o browser terminar de carregar as vozes assíncronas
+    fallbackNativeTts.onVoicesLoaded((voices) => {
+      if (!this.config.primaryVoice && voices.length > 0) {
+        this.config.primaryVoice = voices[0].voiceURI;
+        if (voices.length > 1) {
+          this.config.secondaryVoice = voices[1].voiceURI;
+        }
+        if (this.rawPagesText.length > 0) {
+          this.rebuildChunks();
+        }
+      }
+    });
   }
 
   public setEvents(events: EngineStateEvents): void {
@@ -78,12 +91,34 @@ export class OscarEngine {
 
   public setVoiceStyle(style: VoiceStyle): void {
     this.config.voiceStyle = style;
+    const wasPlaying = this.isPlaying;
     this.rebuildChunks();
+    if (!wasPlaying) {
+      const styleDef = VOICE_STYLES[style] || VOICE_STYLES.classic;
+      const previewText = `${styleDef.label} ativado.`;
+      const targetVoice = this.config.primaryVoice;
+      fallbackNativeTts.preview(
+        previewText,
+        targetVoice,
+        parseFloat((this.config.basePlaybackRate * styleDef.rateMultiplier).toFixed(2)),
+        styleDef.pitchMultiplier
+      );
+    }
   }
 
   public setPrimaryVoice(voiceURI: string): void {
     this.config.primaryVoice = voiceURI;
+    const wasPlaying = this.isPlaying;
     this.rebuildChunks();
+    if (!wasPlaying) {
+      const styleDef = VOICE_STYLES[this.config.voiceStyle] || VOICE_STYLES.classic;
+      fallbackNativeTts.preview(
+        'Voz selecionada.',
+        voiceURI,
+        parseFloat((this.config.basePlaybackRate * styleDef.rateMultiplier).toFixed(2)),
+        styleDef.pitchMultiplier
+      );
+    }
   }
 
   public setSecondaryVoice(voiceURI: string): void {
@@ -307,11 +342,13 @@ export class OscarEngine {
     const styleDef = VOICE_STYLES[this.config.voiceStyle] || VOICE_STYLES.classic;
     const effectivePitch = parseFloat((pitchMultiplier * styleDef.pitchMultiplier).toFixed(2));
 
-    // 2. Calcula a velocidade efetiva com Bionic Pacing
+    // 2. Calcula a velocidade efetiva com Bionic Pacing e Estilo de Voz
     const bionicMultiplier = this.config.bionicPacingEnabled
       ? chunk.acoustics.bionicSpeedMultiplier
       : 1.0;
-    const effectiveRate = parseFloat((this.config.basePlaybackRate * bionicMultiplier).toFixed(2));
+    const effectiveRate = parseFloat(
+      (this.config.basePlaybackRate * bionicMultiplier * styleDef.rateMultiplier).toFixed(2)
+    );
 
     // 3. Escolhe a voz adequada para o papel (Narrador ou Personagem em diálogo)
     const isCharacter = chunk.role === 'character_a' || chunk.role === 'character_b';
@@ -320,14 +357,20 @@ export class OscarEngine {
       : this.config.primaryVoice;
 
     // 4. Injeta micro-respiração humana se requisitado pelo diretor
-    if (this.config.breathInjectionEnabled && chunk.acoustics.injectBreathBefore) {
+    if (this.config.breathInjectionEnabled && chunk.acoustics.injectBreathBefore && styleDef.breathEnabled) {
       try {
         const ctx = webAudioStage.getAudioContext();
-        breathInjector.playBreath(ctx, ctx.destination);
+        if (ctx.state === 'running') {
+          breathInjector.playBreath(ctx, ctx.destination);
+        }
       } catch {
         // ignore
       }
     }
+
+    const effectivePause = Math.round(
+      (chunk.acoustics.pauseAfterMs || 300) * styleDef.pauseMsMultiplier
+    );
 
     // 5. Síntese Neural Nativa com Suporte a Karaokê e Timbre Modulado
     fallbackNativeTts.speak({
@@ -339,7 +382,7 @@ export class OscarEngine {
         this.events.onNetworkFallback?.(false);
       },
       onEnd: () => {
-        this.handleChunkFinished(chunk.acoustics.pauseAfterMs);
+        this.handleChunkFinished(effectivePause);
       },
       onError: (err) => {
         console.warn('Erro na síntese neural:', err);
@@ -349,6 +392,14 @@ export class OscarEngine {
         this.events.onWordBoundary?.(charIndex, charLength);
       },
     });
+  }
+
+  public preview(text: string, voiceURI?: string, style?: VoiceStyle): void {
+    const targetStyle = style || this.config.voiceStyle;
+    const styleDef = VOICE_STYLES[targetStyle] || VOICE_STYLES.classic;
+    const targetVoice = voiceURI || this.config.primaryVoice;
+    const rate = parseFloat((this.config.basePlaybackRate * styleDef.rateMultiplier).toFixed(2));
+    fallbackNativeTts.preview(text, targetVoice, rate, styleDef.pitchMultiplier);
   }
 
   private handleChunkFinished(pauseMs: number = 300): void {

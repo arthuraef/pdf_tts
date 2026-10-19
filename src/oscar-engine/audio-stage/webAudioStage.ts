@@ -11,7 +11,6 @@ export class WebAudioStage {
   private currentSource: AudioBufferSourceNode | null = null;
   private masterGain: GainNode | null = null;
   private isSuspended: boolean = false;
-  private silentAudioElement: HTMLAudioElement | null = null;
 
   constructor() {
     this.initAudioContext();
@@ -42,13 +41,17 @@ export class WebAudioStage {
    * 🛡️ Lei 3: Desbloqueio obrigatório de Autoplay no Mobile (iOS Safari / Android)
    */
   public async ensureUnlocked(): Promise<void> {
-    if (!this.audioCtx) return;
-
-    if (this.audioCtx.state === 'suspended') {
-      await this.audioCtx.resume();
+    if (!this.audioCtx) {
+      this.initAudioContext();
     }
 
-    this.startBackgroundKeepAlive();
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      try {
+        await this.audioCtx.resume();
+      } catch (err) {
+        console.warn('[WebAudioStage] AudioContext resume error:', err);
+      }
+    }
   }
 
   /**
@@ -126,34 +129,14 @@ export class WebAudioStage {
     }
   }
 
-  /**
-   * Mantém o processo do navegador ativo no iOS/Android via áudio silencioso contínuo.
-   */
-  private startBackgroundKeepAlive(): void {
-    if (this.silentAudioElement) return;
-
-    try {
-      // Cria áudio silencioso em loop no formato data URI
-      const silentAudio = document.createElement('audio');
-      silentAudio.src =
-        'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAP8A';
-      silentAudio.loop = true;
-      silentAudio.volume = 0.001; // Quase inaudível
-      silentAudio.play().catch(() => {});
-      this.silentAudioElement = silentAudio;
-    } catch {
-      // ignore
-    }
-  }
-
   public destroy(): void {
     this.stopCurrent();
-    if (this.silentAudioElement) {
-      this.silentAudioElement.pause();
-      this.silentAudioElement = null;
-    }
     if (this.audioCtx) {
-      this.audioCtx.close().catch(() => {});
+      try {
+        this.audioCtx.close().catch(() => {});
+      } catch {
+        // ignore
+      }
       this.audioCtx = null;
     }
   }

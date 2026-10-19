@@ -16,10 +16,6 @@ interface MediaSessionProps {
   skipForward: () => void;
 }
 
-// 1-second silent WAV base64 to maintain background audio capability on mobile
-const SILENT_AUDIO_URI =
-  'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAAD+';
-
 export function useMediaSession({
   document,
   currentPage,
@@ -34,37 +30,9 @@ export function useMediaSession({
   skipBackward,
   skipForward,
 }: MediaSessionProps) {
-  const silentAudioRef = useRef<HTMLAudioElement | null>(null);
-
   // Keep references to latest callbacks so event listeners don't become stale
   const callbacksRef = useRef({ play, pause, resume, skipBackward, skipForward, isPaused });
   callbacksRef.current = { play, pause, resume, skipBackward, skipForward, isPaused };
-
-  // Initialize silent audio loop for iOS/Android background session
-  useEffect(() => {
-    const audio = new Audio(SILENT_AUDIO_URI);
-    audio.loop = true;
-    silentAudioRef.current = audio;
-
-    return () => {
-      audio.pause();
-      silentAudioRef.current = null;
-    };
-  }, []);
-
-  // Manage silent audio playback to keep the media session active
-  useEffect(() => {
-    const audio = silentAudioRef.current;
-    if (!audio) return;
-
-    if (isPlaying) {
-      audio.play().catch(() => {
-        // Autoplay may be deferred until user gesture
-      });
-    } else {
-      audio.pause();
-    }
-  }, [isPlaying]);
 
   // Register MediaSession actions
   useEffect(() => {

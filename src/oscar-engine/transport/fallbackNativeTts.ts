@@ -20,6 +20,9 @@ export class FallbackNativeTts {
   private synth: SpeechSynthesis | null = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
   private cachedVoices: SpeechSynthesisVoice[] = [];
+  private speakTimeout: number | null = null;
+  private keepAliveInterval: number | null = null;
+  private onVoicesReadyCallbacks: Array<(voices: SpeechSynthesisVoice[]) => void> = [];
 
   constructor() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -32,13 +35,46 @@ export class FallbackNativeTts {
     if (!this.synth) return;
 
     const loadVoices = () => {
-      this.cachedVoices = this.synth!.getVoices();
+      try {
+        const live = this.synth ? this.synth.getVoices() : [];
+        if (live.length > 0) {
+          this.cachedVoices = live;
+          const ptVoices = this.getPortugueseVoices();
+          this.onVoicesReadyCallbacks.forEach((cb) => {
+            try {
+              cb(ptVoices);
+            } catch (err) {
+              console.warn('[FallbackNativeTts] Callback error:', err);
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('[FallbackNativeTts] Falha ao carregar vozes:', e);
+      }
     };
 
     loadVoices();
-    if (typeof this.synth.onvoiceschanged !== 'undefined') {
-      this.synth.onvoiceschanged = loadVoices;
+
+    // Use addEventListener instead of assigning to .onvoiceschanged so we never overwrite other handlers
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
+      } catch {
+        // Fallback for older browsers
+        this.synth.onvoiceschanged = loadVoices;
+      }
     }
+  }
+
+  public onVoicesLoaded(callback: (voices: SpeechSynthesisVoice[]) => void): () => void {
+    this.onVoicesReadyCallbacks.push(callback);
+    const current = this.getPortugueseVoices();
+    if (current.length > 0) {
+      callback(current);
+    }
+    return () => {
+      this.onVoicesReadyCallbacks = this.onVoicesReadyCallbacks.filter((cb) => cb !== callback);
+    };
   }
 
   public isAvailable(): boolean {
@@ -47,8 +83,11 @@ export class FallbackNativeTts {
 
   public getPortugueseVoices(): SpeechSynthesisVoice[] {
     if (!this.synth) return [];
-    if (this.cachedVoices.length === 0) {
-      this.cachedVoices = this.synth.getVoices();
+
+    // Always fetch live synth voices in case the browser populated them asynchronously
+    const live = this.synth.getVoices();
+    if (live && live.length > 0) {
+      this.cachedVoices = live;
     }
 
     const all = this.cachedVoices;
@@ -57,17 +96,26 @@ export class FallbackNativeTts {
       return lang.startsWith('pt');
     });
 
+    if (ptVoices.length === 0) {
+      // If no Portuguese voices are installed, return all available voices as a safety fallback
+      return all;
+    }
+
     return ptVoices.sort((a, b) => {
       const score = (v: SpeechSynthesisVoice) => {
         let s = 0;
         const name = v.name.toLowerCase();
         const lang = v.lang.toLowerCase().replace('_', '-');
 
-        if (lang === 'pt-br') s += 50;
-        if (/natural|neural|online/.test(name)) s += 40;
-        if (/francisca|antonio|thalita/.test(name)) s += 45;
-        if (/google/.test(name)) s += 30;
-        if (/premium|enhanced|siri/.test(name)) s += 35;
+        // Strong preference for Brazilian Portuguese
+        if (lang === 'pt-br') s += 60;
+        else if (lang.startsWith('pt')) s += 20;
+
+        // Neural / Online natural voices (Francisca, Antonio, Google, Microsoft, Apple Enhanced)
+        if (/natural|neural|online/.test(name)) s += 50;
+        if (/francisca|antonio|thalita|fabio/.test(name)) s += 45;
+        if (/google/.test(name)) s += 40;
+        if (/premium|enhanced|siri|luciana|felipe|leticia/.test(name)) s += 35;
         if (v.localService) s -= 5;
         return s;
       };
@@ -81,85 +129,181 @@ export class FallbackNativeTts {
       return;
     }
 
-    this.stop();
-
-    const utterance = new SpeechSynthesisUtterance(options.text);
-    utterance.rate = Math.max(0.5, Math.min(2.0, options.rate ?? 1.0));
-    utterance.pitch = Math.max(0.5, Math.min(2.0, options.pitch ?? 1.0));
-    utterance.volume = options.volume ?? 1.0;
-
-    // Busca a voz solicitada
-    const ptVoices = this.getPortugueseVoices();
-    let chosenVoice: SpeechSynthesisVoice | undefined;
-
-    if (options.voiceURI) {
-      chosenVoice = ptVoices.find(
-        (v) =>
-          v.voiceURI === options.voiceURI ||
-          v.name.toLowerCase() === options.voiceURI!.toLowerCase() ||
-          v.name.toLowerCase().includes(options.voiceURI!.toLowerCase())
-      );
+    // Clear any pending speak timeout
+    if (this.speakTimeout !== null) {
+      window.clearTimeout(this.speakTimeout);
+      this.speakTimeout = null;
     }
 
-    if (!chosenVoice && ptVoices.length > 0) {
-      chosenVoice = ptVoices[0];
-    }
+    // Stop keep-alive ping from previous utterance
+    this.stopKeepAlive();
 
-    if (chosenVoice) {
-      utterance.voice = chosenVoice;
-      utterance.lang = chosenVoice.lang;
-    }
-
-    utterance.onstart = () => {
-      options.onStart?.();
-    };
-
-    utterance.onend = () => {
-      this.currentUtterance = null;
-      options.onEnd?.();
-    };
-
-    utterance.onerror = (e) => {
-      this.currentUtterance = null;
-      if (e.error !== 'canceled' && e.error !== 'interrupted') {
-        options.onError?.(e);
+    // Fix Chromium stuck in paused state
+    if (this.synth.paused) {
+      try {
+        this.synth.resume();
+      } catch {
+        // ignore
       }
-    };
+    }
 
-    // Eventos de Karaokê (WordBoundary)
-    if (typeof options.onWordBoundary === 'function') {
-      utterance.onboundary = (e) => {
-        if (e.name === 'word' && typeof e.charIndex === 'number') {
-          options.onWordBoundary?.(e.charIndex, e.charLength || 5);
+    // Cancel current speaking if active
+    if (this.synth.speaking || this.synth.pending) {
+      try {
+        this.synth.cancel();
+      } catch {
+        // ignore
+      }
+    }
+
+    // Chromium bug fix: execute speak() after a micro-delay (40ms) to allow cancel() to cleanly settle
+    this.speakTimeout = window.setTimeout(() => {
+      if (!this.synth) return;
+
+      const utterance = new SpeechSynthesisUtterance(options.text);
+      utterance.rate = Math.max(0.5, Math.min(2.0, options.rate ?? 1.0));
+      utterance.pitch = Math.max(0.5, Math.min(2.0, options.pitch ?? 1.0));
+      utterance.volume = options.volume ?? 1.0;
+
+      // Find the requested voice or choose top ranked PT voice
+      const ptVoices = this.getPortugueseVoices();
+      let chosenVoice: SpeechSynthesisVoice | undefined;
+
+      if (options.voiceURI) {
+        chosenVoice = ptVoices.find(
+          (v) =>
+            v.voiceURI === options.voiceURI ||
+            v.name.toLowerCase() === options.voiceURI!.toLowerCase() ||
+            v.name.toLowerCase().includes(options.voiceURI!.toLowerCase())
+        );
+      }
+
+      if (!chosenVoice && ptVoices.length > 0) {
+        chosenVoice = ptVoices[0];
+      }
+
+      if (chosenVoice) {
+        utterance.voice = chosenVoice;
+        utterance.lang = chosenVoice.lang;
+      } else {
+        utterance.lang = 'pt-BR';
+      }
+
+      utterance.onstart = () => {
+        this.startKeepAlive();
+        options.onStart?.();
+      };
+
+      utterance.onend = () => {
+        this.stopKeepAlive();
+        if (this.currentUtterance === utterance) {
+          this.currentUtterance = null;
+        }
+        options.onEnd?.();
+      };
+
+      utterance.onerror = (e) => {
+        this.stopKeepAlive();
+        if (this.currentUtterance === utterance) {
+          this.currentUtterance = null;
+        }
+        if (e.error !== 'canceled' && e.error !== 'interrupted') {
+          console.warn('[FallbackNativeTts] Utterance error:', e.error);
+          options.onError?.(e);
         }
       };
-    }
 
-    this.currentUtterance = utterance;
-    this.synth.speak(utterance);
+      // Karaoke word boundary events
+      if (typeof options.onWordBoundary === 'function') {
+        utterance.onboundary = (e) => {
+          if (e.name === 'word' && typeof e.charIndex === 'number') {
+            options.onWordBoundary?.(e.charIndex, e.charLength || 5);
+          }
+        };
+      }
+
+      // Retain utterance in instance property to protect from V8 garbage collection mid-speech
+      this.currentUtterance = utterance;
+
+      try {
+        this.synth.speak(utterance);
+      } catch (err) {
+        console.error('[FallbackNativeTts] synth.speak error:', err);
+        options.onError?.(err);
+      }
+    }, 40);
+  }
+
+  public preview(text: string, voiceURI?: string, rate: number = 1.0, pitch: number = 1.0): void {
+    this.speak({
+      text,
+      voiceURI,
+      rate,
+      pitch,
+    });
   }
 
   public stop(): void {
+    if (this.speakTimeout !== null) {
+      window.clearTimeout(this.speakTimeout);
+      this.speakTimeout = null;
+    }
+    this.stopKeepAlive();
     if (this.synth) {
-      this.synth.cancel();
+      try {
+        this.synth.cancel();
+      } catch {
+        // ignore
+      }
       this.currentUtterance = null;
     }
   }
 
   public pause(): void {
+    this.stopKeepAlive();
     if (this.synth) {
-      this.synth.pause();
+      try {
+        this.synth.pause();
+      } catch {
+        // ignore
+      }
     }
   }
 
   public resume(): void {
     if (this.synth && this.synth.paused) {
-      this.synth.resume();
+      try {
+        this.synth.resume();
+        this.startKeepAlive();
+      } catch {
+        // ignore
+      }
     }
   }
 
   public getCurrentUtterance(): SpeechSynthesisUtterance | null {
     return this.currentUtterance;
+  }
+
+  private startKeepAlive(): void {
+    this.stopKeepAlive();
+    this.keepAliveInterval = window.setInterval(() => {
+      if (this.synth && this.synth.speaking && !this.synth.paused) {
+        try {
+          this.synth.pause();
+          this.synth.resume();
+        } catch {
+          // ignore
+        }
+      }
+    }, 10000);
+  }
+
+  private stopKeepAlive(): void {
+    if (this.keepAliveInterval !== null) {
+      window.clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
+    }
   }
 }
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, Zap, Headphones, Wind, Download, CheckCircle2, AlertCircle, Mic, Palette } from 'lucide-react';
+import { Sparkles, Zap, Headphones, Wind, Download, CheckCircle2, Mic, Palette, Volume2 } from 'lucide-react';
 import type { SpeakerRole, VoiceStyle, VoiceStyleDefinition } from '../oscar-engine/types';
 import type { VoiceOption } from '../types';
 
@@ -17,9 +17,11 @@ interface OscarControlsProps {
   voices: VoiceOption[];
   selectedVoiceId: string;
   onVoiceChange: (voiceId: string) => void;
+  onPreviewVoice?: (voiceId: string) => void;
   voiceStyle: VoiceStyle;
   voiceStylesList: VoiceStyleDefinition[];
   onVoiceStyleChange: (style: VoiceStyle) => void;
+  onPreviewStyle?: (style: VoiceStyle) => void;
   onExportAudio: () => Promise<Blob | null>;
   disabled?: boolean;
 }
@@ -33,14 +35,16 @@ export const OscarControls: React.FC<OscarControlsProps> = ({
   onToggleSpatialAudio,
   breathEnabled,
   onToggleBreath,
-  isOfflineFallback,
+  isOfflineFallback: _isOfflineFallback,
   currentRole,
   voices,
   selectedVoiceId,
   onVoiceChange,
+  onPreviewVoice,
   voiceStyle,
   voiceStylesList,
   onVoiceStyleChange,
+  onPreviewStyle,
   onExportAudio,
   disabled = false,
 }) => {
@@ -120,18 +124,30 @@ export const OscarControls: React.FC<OscarControlsProps> = ({
           <div className="bg-slate-950/70 p-3.5 rounded-xl border border-slate-800/80 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex-1 space-y-1.5">
-                <label
-                  htmlFor="oscar-voice-select"
-                  className="text-xs font-semibold text-slate-300 flex items-center gap-1.5"
-                >
-                  <Mic className="w-3.5 h-3.5 text-indigo-400" />
-                  Voz Neural Principal:
-                </label>
+                <div className="flex items-center justify-between">
+                  <label
+                    htmlFor="oscar-voice-select"
+                    className="text-xs font-semibold text-slate-300 flex items-center gap-1.5"
+                  >
+                    <Mic className="w-3.5 h-3.5 text-indigo-400" />
+                    Voz Neural Principal:
+                  </label>
+                  {selectedVoiceId && (
+                    <button
+                      type="button"
+                      onClick={() => onPreviewVoice?.(selectedVoiceId)}
+                      title="Ouvir teste desta voz"
+                      className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-1 cursor-pointer hover:underline"
+                    >
+                      <Volume2 className="w-3 h-3" />
+                      Testar Voz
+                    </button>
+                  )}
+                </div>
                 <select
                   id="oscar-voice-select"
                   value={selectedVoiceId}
                   onChange={(e) => onVoiceChange(e.target.value)}
-                  disabled={disabled}
                   className="w-full bg-slate-900 border border-slate-700/80 rounded-xl px-3 py-2 text-slate-100 text-xs sm:text-sm focus:outline-none focus:border-indigo-500 transition cursor-pointer"
                 >
                   {voices.map((v) => (
@@ -152,16 +168,10 @@ export const OscarControls: React.FC<OscarControlsProps> = ({
 
             {/* Status Info */}
             <div className="flex items-center justify-between pt-2 border-t border-slate-850 text-xs">
-              <span className="text-slate-400 text-[11px]">Estado do Motor:</span>
-              {isOfflineFallback ? (
-                <span className="flex items-center gap-1 text-[11px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">
-                  <AlertCircle className="w-3.5 h-3.5" /> Modo Local de Emergência
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20 font-medium">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Síntese Neural Ativa (Custo Zero)
-                </span>
-              )}
+              <span className="text-slate-400 text-[11px]">Tecnologia de Áudio:</span>
+              <span className="flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20 font-medium">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Síntese Neural HD • 100% Client-Side (Custo Zero)
+              </span>
             </div>
           </div>
 
@@ -172,9 +182,22 @@ export const OscarControls: React.FC<OscarControlsProps> = ({
                 <Palette className="w-3.5 h-3.5 text-indigo-400" />
                 Estilo de Narração & Atuação:
               </label>
-              <span className="text-[11px] text-indigo-300 font-medium">
-                {activeStyleDef?.emoji} {activeStyleDef?.label}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-indigo-300 font-medium">
+                  {activeStyleDef?.emoji} {activeStyleDef?.label}
+                </span>
+                {onPreviewStyle && (
+                  <button
+                    type="button"
+                    onClick={() => onPreviewStyle(voiceStyle)}
+                    title="Ouvir amostra deste estilo"
+                    className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center gap-0.5 cursor-pointer hover:underline"
+                  >
+                    <Volume2 className="w-3 h-3" />
+                    Ouvir
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
@@ -185,10 +208,9 @@ export const OscarControls: React.FC<OscarControlsProps> = ({
                     key={st.id}
                     type="button"
                     onClick={() => onVoiceStyleChange(st.id)}
-                    disabled={disabled}
                     className={`flex flex-col items-center justify-center p-2 rounded-xl border text-center transition cursor-pointer ${
                       isSelected
-                        ? 'bg-indigo-600/25 border-indigo-500 text-white shadow-sm shadow-indigo-600/30'
+                        ? 'bg-indigo-600/25 border-indigo-500 text-white shadow-sm shadow-indigo-600/30 ring-1 ring-indigo-500/50'
                         : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-850'
                     }`}
                   >

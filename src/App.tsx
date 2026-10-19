@@ -200,9 +200,11 @@ export function App() {
               voices={oscar.availableVoices}
               selectedVoiceId={oscar.selectedVoiceId}
               onVoiceChange={oscar.setVoice}
+              onPreviewVoice={oscar.previewVoice}
               voiceStyle={oscar.voiceStyle}
               voiceStylesList={oscar.voiceStylesList}
               onVoiceStyleChange={oscar.setVoiceStyle}
+              onPreviewStyle={oscar.previewStyle}
               onExportAudio={oscar.exportAudio}
               disabled={active.totalChunks === 0}
             />
