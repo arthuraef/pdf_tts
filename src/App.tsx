@@ -197,7 +197,12 @@ export function App() {
               onToggleBreath={oscar.toggleBreath}
               isOfflineFallback={oscar.isOfflineFallback}
               currentRole={oscar.currentChunkRole}
-              currentVoiceId={oscar.currentVoiceId}
+              voices={oscar.availableVoices}
+              selectedVoiceId={oscar.selectedVoiceId}
+              onVoiceChange={oscar.setVoice}
+              voiceStyle={oscar.voiceStyle}
+              voiceStylesList={oscar.voiceStylesList}
+              onVoiceStyleChange={oscar.setVoiceStyle}
               onExportAudio={oscar.exportAudio}
               disabled={active.totalChunks === 0}
             />

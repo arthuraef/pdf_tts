@@ -36,11 +36,25 @@ export interface EngineStateEvents {
   onPlaybackStateChange?: (isPlaying: boolean, isPaused: boolean) => void;
 }
 
+export type VoiceStyle = 'dramatic' | 'didactic' | 'classic' | 'dynamic' | 'calm';
+
+export interface VoiceStyleDefinition {
+  id: VoiceStyle;
+  label: string;
+  emoji: string;
+  description: string;
+  pitchMultiplier: number;
+  pauseMsMultiplier: number;
+  rateMultiplier: number;
+  breathEnabled: boolean;
+}
+
 export interface EngineConfig {
   bionicPacingEnabled: boolean;
   spatialAudioEnabled: boolean;
   breathInjectionEnabled: boolean;
   basePlaybackRate: number;
-  primaryVoice: string;   // Ex: 'pt-BR-FranciscaNeural'
-  secondaryVoice: string; // Ex: 'pt-BR-AntonioNeural'
+  voiceStyle: VoiceStyle;
+  primaryVoice: string;   // Ex: 'pt-BR-FranciscaNeural' ou voiceURI
+  secondaryVoice: string; // Ex: 'pt-BR-AntonioNeural' ou voiceURI
 }

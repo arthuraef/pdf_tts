@@ -1,19 +1,73 @@
 /**
  * Diretor de Atuação & Gerador de Partitura Emocional (emotionalParser.ts)
  * Transforma texto higienizado em ActingScoreChunk com metadados de atuação,
- * prosódia SSML, separação de papéis e velocidade inteligente.
+ * prosódia SSML, separação de papéis, estilos de narração e velocidade inteligente.
  */
 
-import type { ActingScoreChunk, SpeakerRole, AcousticProfile } from '../types';
+import type { ActingScoreChunk, SpeakerRole, AcousticProfile, VoiceStyle, VoiceStyleDefinition } from '../types';
 import { calculateBionicSpeedMultiplier } from './bionicSpeed';
 import { castMemory } from './castMemory';
 import { buildSSML } from './ssmlBuilder';
 
+export const VOICE_STYLES: Record<VoiceStyle, VoiceStyleDefinition> = {
+  classic: {
+    id: 'classic',
+    label: 'Narrador Clássico',
+    emoji: '📖',
+    description: 'Leitura sóbria, cadenciada e equilibrada no estilo audiolivro tradicional.',
+    pitchMultiplier: 1.0,
+    pauseMsMultiplier: 1.0,
+    rateMultiplier: 1.0,
+    breathEnabled: true,
+  },
+  dramatic: {
+    id: 'dramatic',
+    label: 'Dramático & Expressivo',
+    emoji: '🎭',
+    description: 'Atuação teatral com emoção intensa, sussurros e exclamações marcantes.',
+    pitchMultiplier: 1.08,
+    pauseMsMultiplier: 1.4,
+    rateMultiplier: 0.95,
+    breathEnabled: true,
+  },
+  didactic: {
+    id: 'didactic',
+    label: 'Concurso & Didático',
+    emoji: '🎓',
+    description: 'Dicção firme, pausada e focada para memorização de leis e apostilas.',
+    pitchMultiplier: 0.98,
+    pauseMsMultiplier: 0.9,
+    rateMultiplier: 1.0,
+    breathEnabled: false,
+  },
+  dynamic: {
+    id: 'dynamic',
+    label: 'Dinâmico & Bionic Flow',
+    emoji: '⚡',
+    description: 'Velocidade acelerada e transições rápidas para quem tem pressa.',
+    pitchMultiplier: 1.02,
+    pauseMsMultiplier: 0.6,
+    rateMultiplier: 1.15,
+    breathEnabled: false,
+  },
+  calm: {
+    id: 'calm',
+    label: 'Calmo & Noturno',
+    emoji: '🧘',
+    description: 'Ritmo suave e voz macia, ideal para descanso e relaxamento.',
+    pitchMultiplier: 0.93,
+    pauseMsMultiplier: 1.3,
+    rateMultiplier: 0.90,
+    breathEnabled: true,
+  },
+};
+
 export interface ParseOptions {
   docId: number;
   pageNumber: number;
-  primaryVoice?: string;   // Padrão narrador: 'pt-BR-FranciscaNeural'
-  secondaryVoice?: string; // Padrão personagem: 'pt-BR-AntonioNeural'
+  voiceStyle?: VoiceStyle;
+  primaryVoice?: string;   // Padrão narrador
+  secondaryVoice?: string; // Padrão personagem
   bionicEnabled?: boolean;
 }
 
@@ -24,11 +78,13 @@ export function parseTextToActingScores(
   const {
     docId,
     pageNumber,
+    voiceStyle = 'dramatic',
     primaryVoice = 'pt-BR-FranciscaNeural',
     secondaryVoice = 'pt-BR-AntonioNeural',
     bionicEnabled = true,
   } = options;
 
+  const currentStyle = VOICE_STYLES[voiceStyle] || VOICE_STYLES.classic;
   let dialogueToggle = false;
 
   return chunksText.map((rawText, chunkIndex) => {
@@ -73,49 +129,58 @@ export function parseTextToActingScores(
     }
 
     // 2. Modulação Emocional de Prosódia & Acústica
-    const acoustics: AcousticProfile = {
-      spatialPan,
-      injectBreathBefore: false,
-      bionicSpeedMultiplier: bionicEnabled ? calculateBionicSpeedMultiplier(cleanText) : 1.0,
-      pauseAfterMs: 300,
-      pitchAdjust: '+0Hz',
-      rateAdjust: '+0%',
-    };
+    const rawBionic = bionicEnabled ? calculateBionicSpeedMultiplier(cleanText) : 1.0;
+    const effectiveBionic = parseFloat((rawBionic * currentStyle.rateMultiplier).toFixed(2));
+
+    let basePause = 300;
+    let pitchStr = '+0Hz';
+    let rateStr = '+0%';
+    let shouldBreath = currentStyle.breathEnabled;
 
     if (role === 'heading') {
-      acoustics.pitchAdjust = '-6%';
-      acoustics.rateAdjust = '-8%';
-      acoustics.pauseAfterMs = 1200;
+      pitchStr = '-6%';
+      rateStr = '-8%';
+      basePause = 1200;
+      shouldBreath = false;
     } else if (role === 'aside') {
-      acoustics.pitchAdjust = '-3%';
-      acoustics.rateAdjust = '+10%';
-      acoustics.pauseAfterMs = 250;
+      pitchStr = '-3%';
+      rateStr = '+10%';
+      basePause = 250;
     } else {
       // Exclamação ou urgência
       if (
         cleanText.endsWith('!') ||
         /\b(?:gritou|socorro|correu|depressa|perigo|rápido|fogo)\b/i.test(cleanText)
       ) {
-        acoustics.pitchAdjust = '+6%';
-        acoustics.rateAdjust = '+12%';
-        acoustics.injectBreathBefore = true;
-        acoustics.pauseAfterMs = 350;
+        pitchStr = voiceStyle === 'dramatic' ? '+10%' : '+5%';
+        rateStr = '+12%';
+        shouldBreath = true;
+        basePause = 350;
       }
       // Reticências ou calmaria
       else if (
         cleanText.endsWith('...') ||
         /\b(?:sussurrou|silêncio|triste|calma|pensou)\b/i.test(cleanText)
       ) {
-        acoustics.pitchAdjust = '-4%';
-        acoustics.rateAdjust = '-10%';
-        acoustics.pauseAfterMs = 650;
+        pitchStr = '-5%';
+        rateStr = '-10%';
+        basePause = 650;
       }
     }
 
-    // Se o texto for longo (> 120 caracteres) e for fala dramática, injeta respiração antes
-    if (cleanText.length > 120 && role !== 'heading') {
-      acoustics.injectBreathBefore = true;
+    // Se o texto for longo (> 120 caracteres) e o estilo permitir respiração
+    if (cleanText.length > 120 && role !== 'heading' && currentStyle.breathEnabled) {
+      shouldBreath = true;
     }
+
+    const acoustics: AcousticProfile = {
+      spatialPan,
+      injectBreathBefore: shouldBreath,
+      bionicSpeedMultiplier: effectiveBionic,
+      pauseAfterMs: Math.round(basePause * currentStyle.pauseMsMultiplier),
+      pitchAdjust: pitchStr,
+      rateAdjust: rateStr,
+    };
 
     // 3. Monta o payload SSML final
     const ssmlPayload = buildSSML({

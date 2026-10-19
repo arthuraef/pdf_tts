@@ -3,11 +3,11 @@
  * Ponto de entrada único e independente de React/UI.
  */
 
-import type { ActingScoreChunk, EngineConfig, EngineStateEvents } from './types';
+import type { ActingScoreChunk, EngineConfig, EngineStateEvents, VoiceStyle } from './types';
 import { sanitizeDocumentPages } from './sanitizer';
-import { parseTextToActingScores } from './director';
-import { PrefetchQueue, fallbackNativeTts, type WordBoundaryEvent } from './transport';
-import { webAudioStage, audioBuffersToWavBlob, triggerAudioDownload } from './audio-stage';
+import { parseTextToActingScores, VOICE_STYLES } from './director';
+import { PrefetchQueue, fallbackNativeTts } from './transport';
+import { webAudioStage, audioBuffersToWavBlob, triggerAudioDownload, breathInjector } from './audio-stage';
 
 export * from './types';
 export * from './sanitizer';
@@ -21,13 +21,14 @@ export class OscarEngine {
     spatialAudioEnabled: true,
     breathInjectionEnabled: true,
     basePlaybackRate: 1.0,
-    primaryVoice: 'pt-BR-FranciscaNeural',
-    secondaryVoice: 'pt-BR-AntonioNeural',
+    voiceStyle: 'dramatic',
+    primaryVoice: '',
+    secondaryVoice: '',
   };
 
   private events: EngineStateEvents = {};
   private docId: number = 1;
-  private pagesText: string[] = [];
+  private rawPagesText: string[] = [];
   private scoreChunks: ActingScoreChunk[] = [];
   private currentIndex: number = 0;
   private isPlaying: boolean = false;
@@ -40,6 +41,17 @@ export class OscarEngine {
       this.config = { ...this.config, ...config };
     }
     this.prefetchQueue = new PrefetchQueue(webAudioStage.getAudioContext());
+
+    // Se nenhuma voz foi especificada, escolhe a melhor voz em pt-BR disponível
+    if (!this.config.primaryVoice) {
+      const ptVoices = fallbackNativeTts.getPortugueseVoices();
+      if (ptVoices.length > 0) {
+        this.config.primaryVoice = ptVoices[0].voiceURI;
+        if (ptVoices.length > 1) {
+          this.config.secondaryVoice = ptVoices[1].voiceURI;
+        }
+      }
+    }
   }
 
   public setEvents(events: EngineStateEvents): void {
@@ -47,11 +59,36 @@ export class OscarEngine {
   }
 
   public updateConfig(config: Partial<EngineConfig>): void {
+    const prevStyle = this.config.voiceStyle;
+    const prevVoice = this.config.primaryVoice;
     this.config = { ...this.config, ...config };
+
+    // Se o estilo ou voz mudaram, regenera os chunks com a nova partitura
+    if (
+      (config.voiceStyle && config.voiceStyle !== prevStyle) ||
+      (config.primaryVoice && config.primaryVoice !== prevVoice)
+    ) {
+      this.rebuildChunks();
+    }
   }
 
   public getConfig(): EngineConfig {
     return { ...this.config };
+  }
+
+  public setVoiceStyle(style: VoiceStyle): void {
+    this.config.voiceStyle = style;
+    this.rebuildChunks();
+  }
+
+  public setPrimaryVoice(voiceURI: string): void {
+    this.config.primaryVoice = voiceURI;
+    this.rebuildChunks();
+  }
+
+  public setSecondaryVoice(voiceURI: string): void {
+    this.config.secondaryVoice = voiceURI;
+    this.rebuildChunks();
   }
 
   public getCurrentIndex(): number {
@@ -62,24 +99,27 @@ export class OscarEngine {
     return this.scoreChunks;
   }
 
+  public getAvailableVoices(): SpeechSynthesisVoice[] {
+    return fallbackNativeTts.getPortugueseVoices();
+  }
+
   /**
-   * 🛡️ Lei 4: Processamento por Demanda (Lazy Page Parsing)
-   * Higieniza o texto e prepara os chunks com partitura de atuação.
+   * Regenera a partitura emocional dos chunks quando o usuário troca o estilo ou a voz.
    */
-  public loadDocument(docId: number, rawPages: string[], startIndex: number = 0): void {
+  private rebuildChunks(): void {
+    if (this.rawPagesText.length === 0) return;
+
+    const savedIndex = this.currentIndex;
+    const wasPlaying = this.isPlaying;
+
     this.stop();
-    this.docId = docId;
 
-    // 1. Camada 1: Faxina & Dicionário Brasileiro
-    this.pagesText = sanitizeDocumentPages(rawPages);
-
-    // 2. Divide em sentenças estruturadas por página
+    const sanitizedPages = sanitizeDocumentPages(this.rawPagesText);
     const allChunks: ActingScoreChunk[] = [];
 
-    this.pagesText.forEach((pageContent, pageIdx) => {
+    sanitizedPages.forEach((pageContent, pageIdx) => {
       if (!pageContent.trim()) return;
 
-      // Divide em sentenças
       const sentences = pageContent.match(/[^.!?\n]+[.!?\n]*/g) || [pageContent];
       const sentenceStrings: string[] = [];
       let buffer = '';
@@ -99,10 +139,64 @@ export class OscarEngine {
         sentenceStrings.push(buffer.trim());
       }
 
-      // 3. Camada 2: Diretor de Atuação & Partitura Emocional
       const pageScoreChunks = parseTextToActingScores(sentenceStrings, {
         docId: this.docId,
         pageNumber: pageIdx + 1,
+        voiceStyle: this.config.voiceStyle,
+        primaryVoice: this.config.primaryVoice,
+        secondaryVoice: this.config.secondaryVoice,
+        bionicEnabled: this.config.bionicPacingEnabled,
+      });
+
+      allChunks.push(...pageScoreChunks);
+    });
+
+    this.scoreChunks = allChunks;
+    this.prefetchQueue.setChunks(this.scoreChunks);
+    this.currentIndex = Math.max(0, Math.min(savedIndex, this.scoreChunks.length - 1));
+
+    if (wasPlaying) {
+      this.play(this.currentIndex);
+    }
+  }
+
+  /**
+   * Carrega um documento novo e constrói a partitura.
+   */
+  public loadDocument(docId: number, rawPages: string[], startIndex: number = 0): void {
+    this.stop();
+    this.docId = docId;
+    this.rawPagesText = rawPages;
+
+    const sanitizedPages = sanitizeDocumentPages(rawPages);
+    const allChunks: ActingScoreChunk[] = [];
+
+    sanitizedPages.forEach((pageContent, pageIdx) => {
+      if (!pageContent.trim()) return;
+
+      const sentences = pageContent.match(/[^.!?\n]+[.!?\n]*/g) || [pageContent];
+      const sentenceStrings: string[] = [];
+      let buffer = '';
+
+      for (const s of sentences) {
+        const trimmed = s.trim();
+        if (!trimmed) continue;
+
+        if ((buffer + ' ' + trimmed).trim().length > 160 && buffer.length > 0) {
+          sentenceStrings.push(buffer.trim());
+          buffer = trimmed;
+        } else {
+          buffer = buffer ? `${buffer} ${trimmed}` : trimmed;
+        }
+      }
+      if (buffer.trim()) {
+        sentenceStrings.push(buffer.trim());
+      }
+
+      const pageScoreChunks = parseTextToActingScores(sentenceStrings, {
+        docId: this.docId,
+        pageNumber: pageIdx + 1,
+        voiceStyle: this.config.voiceStyle,
         primaryVoice: this.config.primaryVoice,
         secondaryVoice: this.config.secondaryVoice,
         bionicEnabled: this.config.bionicPacingEnabled,
@@ -116,9 +210,6 @@ export class OscarEngine {
     this.currentIndex = Math.max(0, Math.min(startIndex, this.scoreChunks.length - 1));
   }
 
-  /**
-   * Inicia a reprodução com o Micro-Teatro 3D e esteira 'Zero Silêncio'.
-   */
   public async play(targetIndex?: number): Promise<void> {
     if (this.scoreChunks.length === 0) return;
 
@@ -126,7 +217,6 @@ export class OscarEngine {
       this.currentIndex = Math.max(0, Math.min(targetIndex, this.scoreChunks.length - 1));
     }
 
-    // 🛡️ Lei 3: Desbloqueia contexto de áudio em clique do usuário
     await webAudioStage.ensureUnlocked();
 
     if (this.isPaused) {
@@ -191,10 +281,10 @@ export class OscarEngine {
   }
 
   /**
-   * Executa o chunk atual: tenta via WebAudioStage com áudio HD da esteira;
-   * se for fallback, aciona instantaneamente a Web Speech API local sem engasgar.
+   * Executa o chunk atual aplicando a voz selecionada, modulação de pitch,
+   * velocidade bionic e respiração procedural.
    */
-  private async playCurrentChunk(): Promise<void> {
+  private playCurrentChunk(): void {
     if (!this.isPlaying) return;
 
     if (this.currentIndex >= this.scoreChunks.length) {
@@ -206,52 +296,59 @@ export class OscarEngine {
     const chunk = this.scoreChunks[this.currentIndex];
     this.events.onChunkStart?.(chunk);
 
-    try {
-      const prepared = await this.prefetchQueue.getOrFetch(this.currentIndex, this.docId);
-
-      // Notifica se entrou em modo de emergência offline
-      this.events.onNetworkFallback?.(prepared.isFallback);
-
-      if (!prepared.isFallback && prepared.audioBuffer) {
-        // Reproduz com o Micro-Teatro 3D
-        const pan = this.config.spatialAudioEnabled ? chunk.acoustics.spatialPan : 0;
-        const bionicMultiplier = this.config.bionicPacingEnabled
-          ? chunk.acoustics.bionicSpeedMultiplier
-          : 1.0;
-        const effectiveRate = this.config.basePlaybackRate * bionicMultiplier;
-
-        // Dispara eventos de Karaokê se disponíveis
-        this.dispatchWordBoundaries(prepared.wordBoundaries, effectiveRate);
-
-        webAudioStage.playBuffer(
-          prepared.audioBuffer,
-          pan,
-          effectiveRate,
-          this.config.breathInjectionEnabled && chunk.acoustics.injectBreathBefore,
-          () => {
-            this.handleChunkFinished(chunk.acoustics.pauseAfterMs);
-          }
-        );
-      } else {
-        // 🛡️ Lei 2: Executa Fallback Nativo sem parar o livro
-        fallbackNativeTts.speak(
-          chunk.cleanText,
-          this.config.basePlaybackRate,
-          undefined,
-          () => {
-            this.handleChunkFinished(chunk.acoustics.pauseAfterMs);
-          },
-          (err) => {
-            console.warn('Erro no fallback nativo:', err);
-            this.handleChunkFinished(200);
-          }
-        );
+    // 1. Calcula o pitch baseado no perfil acústico e estilo
+    let pitchMultiplier = 1.0;
+    if (chunk.acoustics.pitchAdjust) {
+      const match = chunk.acoustics.pitchAdjust.match(/([+-]?\d+)%/);
+      if (match) {
+        pitchMultiplier = 1.0 + parseInt(match[1], 10) / 100;
       }
-    } catch (err) {
-      console.warn('Erro ao reproduzir chunk no OscarEngine:', err);
-      // Avança suavemente em caso de falha irreparável
-      this.handleChunkFinished(200);
     }
+    const styleDef = VOICE_STYLES[this.config.voiceStyle] || VOICE_STYLES.classic;
+    const effectivePitch = parseFloat((pitchMultiplier * styleDef.pitchMultiplier).toFixed(2));
+
+    // 2. Calcula a velocidade efetiva com Bionic Pacing
+    const bionicMultiplier = this.config.bionicPacingEnabled
+      ? chunk.acoustics.bionicSpeedMultiplier
+      : 1.0;
+    const effectiveRate = parseFloat((this.config.basePlaybackRate * bionicMultiplier).toFixed(2));
+
+    // 3. Escolhe a voz adequada para o papel (Narrador ou Personagem em diálogo)
+    const isCharacter = chunk.role === 'character_a' || chunk.role === 'character_b';
+    const targetVoice = isCharacter && this.config.secondaryVoice
+      ? this.config.secondaryVoice
+      : this.config.primaryVoice;
+
+    // 4. Injeta micro-respiração humana se requisitado pelo diretor
+    if (this.config.breathInjectionEnabled && chunk.acoustics.injectBreathBefore) {
+      try {
+        const ctx = webAudioStage.getAudioContext();
+        breathInjector.playBreath(ctx, ctx.destination);
+      } catch {
+        // ignore
+      }
+    }
+
+    // 5. Síntese Neural Nativa com Suporte a Karaokê e Timbre Modulado
+    fallbackNativeTts.speak({
+      text: chunk.cleanText,
+      voiceURI: targetVoice,
+      rate: effectiveRate,
+      pitch: effectivePitch,
+      onStart: () => {
+        this.events.onNetworkFallback?.(false);
+      },
+      onEnd: () => {
+        this.handleChunkFinished(chunk.acoustics.pauseAfterMs);
+      },
+      onError: (err) => {
+        console.warn('Erro na síntese neural:', err);
+        this.handleChunkFinished(200);
+      },
+      onWordBoundary: (charIndex, charLength) => {
+        this.events.onWordBoundary?.(charIndex, charLength);
+      },
+    });
   }
 
   private handleChunkFinished(pauseMs: number = 300): void {
@@ -270,29 +367,10 @@ export class OscarEngine {
     }
   }
 
-  private dispatchWordBoundaries(
-    boundaries: WordBoundaryEvent[],
-    playbackRate: number
-  ): void {
-    if (!boundaries || boundaries.length === 0 || !this.events.onWordBoundary) return;
-
-    for (const b of boundaries) {
-      const delayMs = (b.offset / playbackRate);
-      setTimeout(() => {
-        if (this.isPlaying && !this.isPaused) {
-          this.events.onWordBoundary?.(b.text.length, b.length);
-        }
-      }, delayMs);
-    }
-  }
-
   private notifyState(): void {
     this.events.onPlaybackStateChange?.(this.isPlaying, this.isPaused);
   }
 
-  /**
-   * Exporta a página/capítulo atual em formato WAV/MP3 com download direto.
-   */
   public async exportChapterAudio(pageNumber: number): Promise<Blob> {
     const pageChunks = this.scoreChunks.filter((c) => c.pageNumber === pageNumber);
     const buffers: AudioBuffer[] = [];
