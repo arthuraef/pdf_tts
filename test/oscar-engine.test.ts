@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { dehyphenate } from '../src/oscar-engine/sanitizer/dehyphenator.ts';
-import { applyPtBrLexicon } from '../src/oscar-engine/sanitizer/ptBrLexicon.ts';
-import { sanitizeDocumentPages } from '../src/oscar-engine/sanitizer/index.ts';
+import { dehyphenate, applyPtBrLexicon, sanitizeDocumentPages, preReadRepair, repairSeparatedLetters, repairPdfLigatures, normalizeAllCaps } from '../src/oscar-engine/sanitizer/index.ts';
 import { VOICE_STYLES, parseTextToActingScores } from '../src/oscar-engine/director/emotionalParser.ts';
 import { calculateBionicSpeedMultiplier } from '../src/oscar-engine/director/bionicSpeed.ts';
 import { FallbackNativeTts } from '../src/oscar-engine/transport/fallbackNativeTts.ts';
@@ -263,7 +261,7 @@ test('TextChunker: splitSentenceUnderLimit ensures sentences stay strictly under
   });
 });
 
-test('TextChunker: splitIntoSentences ensures every chunk starts and ends between periods', () => {
+test('TextChunker: splitIntoSentences chunks naturally without inventing fake dots', () => {
   const samplePdfPage = `
 Capítulo Primeiro
 
@@ -272,31 +270,55 @@ do porto ao entardecer. O passageiro pagou R$ 1.500,50 pela cabine.
 Você acredita que chegaremos a tempo? perguntou ele com curiosidade.
 Sim! Não há motivos para dúvidas... tudo correrá bem.
 Ele disse: "Estaremos seguros aqui."
+
+Conclusão da Introdução
   `;
 
   const chunks = splitIntoSentences(samplePdfPage);
 
-  assert.ok(chunks.length >= 5);
+  assert.ok(chunks.length >= 6);
 
-  chunks.forEach((chunk, index) => {
-    assert.ok(chunk.length > 0, `Chunk ${index} não pode ser vazio`);
-    // Deve terminar estritamente com pontuação final (. ! ? ... com aspas opcionais)
-    assert.match(
-      chunk,
-      /[.!?…]["'”»)]*$/,
-      `Chunk ${index} deve terminar com ponto final: "${chunk}"`
-    );
-    // Não deve começar com vírgulas ou pontuação solta
-    assert.doesNotMatch(
-      chunk,
-      /^[,;:]/,
-      `Chunk ${index} não pode começar com vírgula ou pontuação secundária: "${chunk}"`
-    );
-  });
+  // Título inicial NÃO deve ter ponto final inventado
+  assert.equal(chunks[0], 'Capítulo Primeiro');
 
-  // Verifica que número com ponto não causou quebra indevida
-  assert.ok(chunks.some((c) => c.includes('R$ 1.500,50')));
-  // Verifica que título sem ponto recebeu ponto final
-  assert.equal(chunks[0], 'Capítulo Primeiro.');
+  // Frase seguinte com quebra de linha de coluna unida em uma só
+  assert.equal(chunks[1], 'A grande jornada começou quando o navio zarpou do porto ao entardecer.');
+
+  // Número decimal não deve quebrar a frase (está no chunk 2)
+  assert.equal(chunks[2], 'O passageiro pagou R$ 1.500,50 pela cabine.');
+
+  // Título final NÃO deve ter ponto final inventado
+  assert.equal(chunks[chunks.length - 1], 'Conclusão da Introdução');
+});
+
+test('TextSanitizer: Pre-reading repair handles separated letters, PDF ligatures and all-caps words', () => {
+  // 1. Letras separadas: B RUXA -> Bruxa
+  const separatedLetters = 'A B RUXA atirou na floresta. C A P Í T U L O P R I M E I R O';
+  const repairedSpaced = repairSeparatedLetters(separatedLetters);
+  assert.ok(repairedSpaced.includes('BRUXA'));
+  assert.ok(repairedSpaced.includes('CAPÍTULO'));
+
+  // 2. Ligaduras de PDF: %00echa -> flecha
+  const ligatureText = 'O guerreiro disparou uma %00echa no %01m da tarde.';
+  const repairedLigatures = repairPdfLigatures(ligatureText);
+  assert.equal(repairedLigatures, 'O guerreiro disparou uma flecha no fim da tarde.');
+
+  // 3. Palavras todas em maiúsculas normalizadas para pronúncia fluida (sem soletrar siglas)
+  const allCapsText = 'DESIGN E MARKETING PARA O LIVRO DA BRUXA E O STF NO BRASIL';
+  const normalized = normalizeAllCaps(allCapsText);
+  assert.ok(normalized.includes('Design'));
+  assert.ok(normalized.includes('Marketing'));
+  assert.ok(normalized.includes('Bruxa'));
+  // Siglas reais são mantidas
+  assert.ok(normalized.includes('STF'));
+
+  // 4. Pipeline completo de pré-leitura
+  const rawInput = 'A B RUXA atirou uma %00echa. Leia o E-BOOK de DESIGN e veja no STF.';
+  const output = preReadRepair(rawInput);
+  assert.ok(output.includes('Bruxa'));
+  assert.ok(output.includes('flecha'));
+  assert.ok(output.includes('Ebook'));
+  assert.ok(output.includes('Design'));
+  assert.ok(output.includes('STF'));
 });
 

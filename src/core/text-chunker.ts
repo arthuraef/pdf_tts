@@ -1,78 +1,71 @@
 import type { PDFPageContent, TextChunk } from '../types';
 
 /**
- * Divide o texto estritamente em sentenças completas que começam e terminam
- * entre pontos finais (pontuação de término de frase: . ! ? ...).
- * Garante integridade sintática e cadência natural, sem fatiamentos artificiais
- * em vírgulas ou quebras de linha acidentais de PDFs.
+ * Divide o texto em chunks naturais correspondentes a sentenças completas ou títulos.
+ * O texto é preservado EXATAMENTE como está no PDF:
+ * - NENHUM ponto final é inventado ou forçado onde não existe.
+ * - Sentenças são fatiadas pela pontuação final REAL (. ! ? ... …) existente no texto.
+ * - Títulos e parágrafos sem ponto final mantêm sua grafia autêntica.
+ * - Quebras de linha simples decorrentes da largura de coluna do PDF são unidas com espaço
+ *   para evitar frases decepadas.
  */
 export function splitIntoSentences(text: string): string[] {
   if (!text || !text.trim()) return [];
 
-  // 1. Normaliza quebras de linha e parágrafos do PDF
-  let normalized = text.replace(/\r\n/g, '\n');
+  // 1. Divide em blocos/parágrafos naturais por quebra dupla de linha (\n\n+)
+  const blocks = text
+    .replace(/\r\n/g, '\n')
+    .split(/\n\s*\n+/)
+    .map((b) => b.trim())
+    .filter(Boolean);
 
-  // Adiciona ponto final em linhas que são títulos ou parágrafos sem pontuação final
-  normalized = normalized.replace(/([^\s.!?…:;—–])\n\s*\n+/g, '$1.\n\n');
+  const chunks: string[] = [];
 
-  // Quebras de linha simples dentro de parágrafos são unidas com espaço
-  normalized = normalized.replace(/([^\n])\n([^\n])/g, '$1 $2');
+  for (const block of blocks) {
+    // 2. Une quebras de linha simples dentro do mesmo parágrafo (quebras de coluna do PDF)
+    const normalized = block
+      .replace(/([^\n])\n([^\n])/g, '$1 $2')
+      .replace(/[ \t]+/g, ' ')
+      .trim();
 
-  // Colapsa múltiplos espaços em branco
-  normalized = normalized.replace(/[ \t]+/g, ' ').trim();
+    if (!normalized) continue;
 
-  if (!normalized) return [];
+    // 3. Protege pontos que não são finais de frase
+    const DOT = '\uE000';
+    const protectedText = normalized
+      .replace(/(\d)\.(\d)/g, `$1${DOT}$2`)
+      .replace(/\b([A-Z])\.\s+/g, `$1${DOT} `)
+      .replace(
+        /\b(Dr|Dra|Sr|Sra|Prof|Profa|Art|pág|cap|vol|etc|vs|cia|ltda|apto|núm|nº|al|av)\.\s+/gi,
+        (_m, a) => `${a}${DOT} `
+      );
 
-  // 2. Protege pontos que não são terminação de frase
-  const PLACEHOLDER_DOT = '\uE000';
-
-  // a) Decimais e separadores de milhar (ex: 1.500 ou 3.14)
-  normalized = normalized.replace(/(\d)\.(\d)/g, `$1${PLACEHOLDER_DOT}$2`);
-
-  // b) Iniciais de nomes com letra maiúscula única (ex: J. K. Rowling)
-  normalized = normalized.replace(/\b([A-Z])\.\s+/g, `$1${PLACEHOLDER_DOT} `);
-
-  // c) Abreviações comuns que terminam em ponto
-  const abbrevRegex = /\b(Dr|Dra|Sr|Sra|Prof|Profa|Art|pág|cap|vol|etc|vs|cia|ltda|apto|núm|nº|al|av)\.\s+/gi;
-  normalized = normalized.replace(abbrevRegex, (_m, abbr) => `${abbr}${PLACEHOLDER_DOT} `);
-
-  // 3. Fatiamento por pontuação final (. ! ? ... ou reticências …)
-  // seguido opcionalmente por aspas ou parênteses de fechamento
-  const sentenceRegex = /([^.!?…]+[.!?…]+["'”»)]*)/g;
-  const matches = normalized.match(sentenceRegex);
-  const sentences: string[] = [];
-
-  if (matches && matches.length > 0) {
+    // 4. Fatiamento pela pontuação final (. ! ? ... ou …) que REALMENTE existe no texto
+    // seguido opcionalmente por aspas ou parênteses e espaço/fim de string
+    const sentenceRegex = /([^.!?…]+[.!?…]+["'”»)]*)(?:\s+|$)/g;
+    let match: RegExpExecArray | null;
     let lastIndex = 0;
-    for (const match of matches) {
-      lastIndex = normalized.indexOf(match, lastIndex) + match.length;
-      const restored = match.replace(new RegExp(PLACEHOLDER_DOT, 'g'), '.').trim();
-      if (restored) {
-        // Garante que todo chunk termine com pontuação final
-        const withFinalPunct = /[.!?…]["'”»)]*$/.test(restored) ? restored : `${restored}.`;
-        sentences.push(withFinalPunct);
-      }
+
+    while ((match = sentenceRegex.exec(protectedText)) !== null) {
+      lastIndex = sentenceRegex.lastIndex;
+      const clean = match[1].replace(new RegExp(DOT, 'g'), '.').trim();
+      if (clean) chunks.push(clean);
     }
 
-    const remaining = normalized.slice(lastIndex).trim();
-    if (remaining) {
-      const restoredRem = remaining.replace(new RegExp(PLACEHOLDER_DOT, 'g'), '.');
-      const withFinalPunct = /[.!?…]["'”»)]*$/.test(restoredRem) ? restoredRem : `${restoredRem}.`;
-      sentences.push(withFinalPunct);
-    }
-  } else {
-    const restored = normalized.replace(new RegExp(PLACEHOLDER_DOT, 'g'), '.').trim();
-    if (restored) {
-      const withFinalPunct = /[.!?…]["'”»)]*$/.test(restored) ? restored : `${restored}.`;
-      sentences.push(withFinalPunct);
+    // 5. Se sobrou texto sem pontuação no fim do parágrafo (ex: título de capítulo ou item de lista)
+    // Preserva o texto AUTÊNTICO — NÃO adiciona ponto final falso!
+    const remainder = protectedText.slice(lastIndex).trim();
+    if (remainder) {
+      const cleanRem = remainder.replace(new RegExp(DOT, 'g'), '.').trim();
+      if (cleanRem) chunks.push(cleanRem);
     }
   }
 
-  return sentences;
+  return chunks;
 }
 
 /**
- * Utilitário auxiliar para fatiamento sob limite estrito se solicitado externamente.
+ * Utilitário auxiliar para fatiamento sob limite estrito se solicitado explicitamente.
  */
 export function splitSentenceUnderLimit(sentence: string, maxChars: number = 160): string[] {
   const trimmed = sentence.trim();
@@ -123,7 +116,7 @@ export function splitSentenceUnderLimit(sentence: string, maxChars: number = 160
 }
 
 /**
- * Constrói chunks atômicos por sentenças completas que começam e terminam entre pontos finais.
+ * Constrói chunks atômicos por sentenças naturais a partir de páginas de PDF.
  */
 export function buildChunksFromPages(pages: PDFPageContent[]): TextChunk[] {
   const chunks: TextChunk[] = [];
