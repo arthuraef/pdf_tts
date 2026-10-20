@@ -322,3 +322,111 @@ test('TextSanitizer: Pre-reading repair handles separated letters, PDF ligatures
   assert.ok(output.includes('STF'));
 });
 
+
+// ---------------------------------------------------------------------------
+// 7. Normalization Provenance & Discursive Segmentation Tests (v4.0 Specification)
+// ---------------------------------------------------------------------------
+import { sanitizeWithProvenance } from '../src/oscar-engine/sanitizer/normalizationMap.ts';
+import { splitDiscursiveUnits, buildChunksFromPages } from '../src/core/text-chunker.ts';
+
+test('NormalizationMap: sanitizeWithProvenance tracks spans, rule IDs, and token classes', () => {
+  const input = 'A B RUXA atirou uma %00echa no Art. 5º por R$ 50.';
+  const result = sanitizeWithProvenance(input, 1);
+
+  assert.ok(result.spokenText.length > 0);
+  assert.ok(result.normalizationMap.length >= 4);
+
+  // 1. OCR Drop-cap / tracking repair
+  const ocrRepair = result.normalizationMap.find((m) => m.rule_id === 'ptbr.repair.ocr_tracking.v1');
+  assert.ok(ocrRepair, 'Deve registrar ptbr.repair.ocr_tracking.v1');
+  assert.equal(ocrRepair.token_class, 'ocr_repair');
+  assert.equal(ocrRepair.source_spans[0].page, 1);
+
+  // 2. Ligature repair
+  const ligature = result.normalizationMap.find((m) => m.rule_id === 'ptbr.repair.ligature.v1');
+  assert.ok(ligature, 'Deve registrar ptbr.repair.ligature.v1');
+  assert.equal(ligature.token_class, 'ligature');
+
+  // 3. Legal article verbalization
+  const legalArticle = result.normalizationMap.find((m) => m.rule_id === 'ptbr.legal.artigo.v1');
+  assert.ok(legalArticle, 'Deve registrar ptbr.legal.artigo.v1');
+  assert.equal(legalArticle.token_class, 'legal_article');
+
+  // 4. Currency verbalization
+  const currency = result.normalizationMap.find((m) => m.rule_id === 'ptbr.currency.brl.v1');
+  assert.ok(currency, 'Deve registrar ptbr.currency.brl.v1');
+  assert.equal(currency.token_class, 'currency');
+
+  // Spoken text verification
+  assert.ok(result.spokenText.includes('flecha'));
+  assert.ok(result.spokenText.includes('Artigo quinto'));
+  assert.ok(result.spokenText.includes('50 reais'));
+});
+
+test('DiscursiveSegmentation: preserves paragraph context when within budget, falls back hierarchically', () => {
+  // Parágrafo curto/médio (<= 450 chars): deve ser mantido como uma única unidade discursiva
+  const coherentParagraph = 'O Direito Civil regula as relações privadas. Suas fontes incluem a lei e os costumes. A jurisprudência também orienta os tribunais.';
+  const units = splitDiscursiveUnits(coherentParagraph, { maxParagraphChars: 450 });
+
+  assert.equal(units.length, 1);
+  assert.equal(units[0].level, 'paragraph');
+  assert.equal(units[0].text, coherentParagraph);
+  assert.equal(units[0].sourceStart, 0);
+  assert.equal(units[0].sourceEnd, coherentParagraph.length);
+
+  // Parágrafo longo (> 100 chars no teste): deve recorrer ao fallback de sentenças
+  const unitsSentenceFallback = splitDiscursiveUnits(coherentParagraph, { maxParagraphChars: 80, maxSentenceChars: 150 });
+  assert.equal(unitsSentenceFallback.length, 3);
+  unitsSentenceFallback.forEach((u) => {
+    assert.equal(u.level, 'sentence');
+    assert.ok(u.text.endsWith('.'));
+  });
+
+  // Título isolado sem ponto final: NUNCA deve inventar ponto final
+  const titleText = 'CAPÍTULO PRIMEIRO\n\nEste é o primeiro parágrafo do livro.';
+  const titleUnits = splitDiscursiveUnits(titleText, { maxParagraphChars: 300 });
+  assert.equal(titleUnits.length, 2);
+  assert.equal(titleUnits[0].text, 'CAPÍTULO PRIMEIRO');
+  assert.ok(!titleUnits[0].text.endsWith('.'), 'Título não pode receber ponto final falso!');
+});
+
+test('DiscursiveSegmentation: buildChunksFromPages assigns source offsets and chunk indices', () => {
+  const pages = [
+    {
+      pageNumber: 1,
+      text: 'Introdução ao estudo do Direito.\n\nO artigo primeiro estabelece a personalidade civil.',
+    },
+    {
+      pageNumber: 2,
+      text: 'Capítulo 2: Dos Bens Imóveis e Móveis',
+    },
+  ];
+
+  const chunks = buildChunksFromPages(pages, { maxParagraphChars: 200 });
+
+  assert.equal(chunks.length, 3);
+  assert.equal(chunks[0].pageIndex, 0);
+  assert.equal(chunks[0].chunkIndex, 0);
+  assert.ok(chunks[0].sourceOffsets && chunks[0].sourceOffsets.length > 0);
+  assert.equal(chunks[0].sourceOffsets[0].page, 1);
+
+  assert.equal(chunks[2].pageIndex, 1);
+  assert.equal(chunks[2].chunkIndex, 2);
+  assert.equal(chunks[2].sourceOffsets![0].page, 2);
+});
+
+test('OscarEngine: loadDocument sets source offsets on ActingScoreChunks', () => {
+  const engine = new OscarEngine();
+  const samplePages = [
+    'Primeiro parágrafo de introdução.\n\nSegundo parágrafo explicativo da matéria.',
+  ];
+
+  engine.loadDocument(42, samplePages);
+  const chunks = engine.getScoreChunks();
+
+  assert.ok(chunks.length >= 2);
+  assert.ok(chunks[0].sourceOffsets, 'Deve conter sourceOffsets');
+  assert.equal(chunks[0].sourceOffsets![0].page, 1);
+  assert.ok(typeof chunks[0].sourceOffsets![0].start === 'number');
+  assert.ok(typeof chunks[0].sourceOffsets![0].end === 'number');
+});

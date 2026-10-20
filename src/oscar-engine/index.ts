@@ -8,7 +8,7 @@ import { sanitizeDocumentPages } from './sanitizer';
 import { parseTextToActingScores, VOICE_STYLES } from './director';
 import { PrefetchQueue, fallbackNativeTts } from './transport';
 import { webAudioStage, audioBuffersToWavBlob, triggerAudioDownload, breathInjector } from './audio-stage';
-import { splitIntoSentences } from '../core/text-chunker';
+import { splitDiscursiveUnits } from '../core/text-chunker';
 
 export * from './types';
 export * from './sanitizer';
@@ -158,15 +158,29 @@ export class OscarEngine {
     sanitizedPages.forEach((pageContent, pageIdx) => {
       if (!pageContent.trim()) return;
 
-      const sentenceStrings = splitIntoSentences(pageContent);
+      const discursiveUnits = splitDiscursiveUnits(pageContent);
+      const textStrings = discursiveUnits.map((u) => u.text);
 
-      const pageScoreChunks = parseTextToActingScores(sentenceStrings, {
+      const pageScoreChunks = parseTextToActingScores(textStrings, {
         docId: this.docId,
         pageNumber: pageIdx + 1,
         voiceStyle: this.config.voiceStyle,
         primaryVoice: this.config.primaryVoice,
         secondaryVoice: this.config.secondaryVoice,
         bionicEnabled: this.config.bionicPacingEnabled,
+      });
+
+      pageScoreChunks.forEach((chunk, cIdx) => {
+        const unit = discursiveUnits[cIdx];
+        if (unit) {
+          chunk.sourceOffsets = [
+            {
+              page: pageIdx + 1,
+              start: unit.sourceStart,
+              end: unit.sourceEnd,
+            },
+          ];
+        }
       });
 
       allChunks.push(...pageScoreChunks);
@@ -182,7 +196,7 @@ export class OscarEngine {
   }
 
   /**
-   * Carrega um documento novo e constrói a partitura.
+   * Carrega um documento novo e constrói a partitura com segmentação discursiva.
    */
   public loadDocument(docId: number, rawPages: string[], startIndex: number = 0): void {
     this.stop();
@@ -195,15 +209,29 @@ export class OscarEngine {
     sanitizedPages.forEach((pageContent, pageIdx) => {
       if (!pageContent.trim()) return;
 
-      const sentenceStrings = splitIntoSentences(pageContent);
+      const discursiveUnits = splitDiscursiveUnits(pageContent);
+      const textStrings = discursiveUnits.map((u) => u.text);
 
-      const pageScoreChunks = parseTextToActingScores(sentenceStrings, {
+      const pageScoreChunks = parseTextToActingScores(textStrings, {
         docId: this.docId,
         pageNumber: pageIdx + 1,
         voiceStyle: this.config.voiceStyle,
         primaryVoice: this.config.primaryVoice,
         secondaryVoice: this.config.secondaryVoice,
         bionicEnabled: this.config.bionicPacingEnabled,
+      });
+
+      pageScoreChunks.forEach((chunk, cIdx) => {
+        const unit = discursiveUnits[cIdx];
+        if (unit) {
+          chunk.sourceOffsets = [
+            {
+              page: pageIdx + 1,
+              start: unit.sourceStart,
+              end: unit.sourceEnd,
+            },
+          ];
+        }
       });
 
       allChunks.push(...pageScoreChunks);

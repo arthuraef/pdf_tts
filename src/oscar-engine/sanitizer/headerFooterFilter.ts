@@ -1,6 +1,7 @@
 /**
  * Filtro de Cabeçalhos, Rodapés e Numeração de Página (headerFooterFilter.ts)
- * Elimina ruídos de diagramação que quebram o fluxo da leitura.
+ * Elimina ruídos de diagramação que quebram o fluxo da leitura,
+ * preservando estritamente quebras de parágrafos duplas (\n\n).
  */
 
 export interface PageLineMetadata {
@@ -12,7 +13,7 @@ export function isPageNumberPattern(line: string): boolean {
   const trimmed = line.trim();
   if (!trimmed) return false;
 
-  // Exemplos: "42", "- 42 -", "Página 42", "Pag. 42", "42 / 150", "[ 12 ]", "12 | Capítulo 1"
+  // Exemplos: "42", "- 42 -", "Página 42", "Pag. 42", "42 / 150", "[ 12 ]", "12 | Capítulo 1", "1", "2", "3"
   return (
     /^(?:[-–—\s]*\d+[-–—\s]*)$/.test(trimmed) ||
     /^(?:Pág(?:ina)?\.?\s*\d+(?:\s*(?:de|\/)\s*\d+)?)$/i.test(trimmed) ||
@@ -22,63 +23,72 @@ export function isPageNumberPattern(line: string): boolean {
 }
 
 /**
- * Remove cabeçalhos e rodapés de uma lista de páginas analisando padrões de repetição e posição.
+ * Remove cabeçalhos e rodapés de uma lista de páginas analisando padrões de repetição e posição,
+ * preservando a separação natural de parágrafos (\n\n).
  */
 export function filterHeadersAndFooters(pagesText: string[]): string[] {
   if (pagesText.length === 0) return [];
   if (pagesText.length === 1) {
-    // Para página única, apenas remove numeração isolada no início ou fim
     return [cleanSinglePage(pagesText[0])];
   }
 
-  // 1. Extrai a primeira e última linha não vazia de cada página
-  const pageLines = pagesText.map((p) =>
-    p.split('\n').map((l) => l.trim()).filter(Boolean)
-  );
+  // 1. Identifica a primeira e última linha não-vazia de cada página
+  const firstNonEmptyLines = pagesText.map((p) => {
+    const lines = p.split(/\r?\n/).map((l) => l.trim());
+    return lines.find((l) => l.length > 0) || '';
+  });
 
-  // 2. Mapeia frequências da primeira linha e da última linha para identificar repetições
+  const lastNonEmptyLines = pagesText.map((p) => {
+    const lines = p.split(/\r?\n/).map((l) => l.trim());
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].length > 0) return lines[i];
+    }
+    return '';
+  });
+
   const firstLineFreq = new Map<string, number>();
   const lastLineFreq = new Map<string, number>();
 
-  pageLines.forEach((lines) => {
-    if (lines.length > 0) {
-      const first = lines[0];
-      firstLineFreq.set(first, (firstLineFreq.get(first) || 0) + 1);
-    }
-    if (lines.length > 1) {
-      const last = lines[lines.length - 1];
-      lastLineFreq.set(last, (lastLineFreq.get(last) || 0) + 1);
-    }
+  firstNonEmptyLines.forEach((l) => {
+    if (l) firstLineFreq.set(l, (firstLineFreq.get(l) || 0) + 1);
+  });
+  lastNonEmptyLines.forEach((l) => {
+    if (l) lastLineFreq.set(l, (lastLineFreq.get(l) || 0) + 1);
   });
 
   const threshold = Math.max(2, Math.floor(pagesText.length * 0.25));
 
-  // 3. Processa cada página filtrando cabeçalhos e rodapés repetidos ou numéricos
-  return pageLines.map((lines) => {
+  // 2. Processa cada página filtrando cabeçalhos e rodapés repetidos ou numéricos
+  return pagesText.map((pageStr) => {
+    const lines = pageStr.split(/\r?\n/).map((l) => l.trim());
     if (lines.length === 0) return '';
 
     let startIndex = 0;
     let endIndex = lines.length;
 
-    // Checa primeira linha
-    if (lines.length > 0) {
-      const first = lines[0];
+    // Localiza primeiro índice não-vazio
+    while (startIndex < endIndex && lines[startIndex] === '') {
+      startIndex++;
+    }
+    if (startIndex < endIndex) {
+      const first = lines[startIndex];
       const isRepeated = (firstLineFreq.get(first) || 0) >= threshold;
       const isNum = isPageNumberPattern(first);
-
       if (isRepeated || isNum) {
-        startIndex = 1;
+        startIndex++;
       }
     }
 
-    // Checa última linha
+    // Localiza último índice não-vazio
+    while (endIndex > startIndex && lines[endIndex - 1] === '') {
+      endIndex--;
+    }
     if (endIndex > startIndex) {
       const last = lines[endIndex - 1];
       const isRepeated = (lastLineFreq.get(last) || 0) >= threshold;
       const isNum = isPageNumberPattern(last);
-
       if (isRepeated || isNum) {
-        endIndex = endIndex - 1;
+        endIndex--;
       }
     }
 
@@ -87,17 +97,24 @@ export function filterHeadersAndFooters(pagesText: string[]): string[] {
 }
 
 function cleanSinglePage(pageText: string): string {
-  const lines = pageText.split('\n').map((l) => l.trim()).filter(Boolean);
+  const lines = pageText.split(/\r?\n/).map((l) => l.trim());
   if (lines.length <= 1) return pageText;
 
   let startIndex = 0;
   let endIndex = lines.length;
 
-  if (isPageNumberPattern(lines[0])) {
-    startIndex = 1;
+  while (startIndex < endIndex && lines[startIndex] === '') {
+    startIndex++;
+  }
+  if (startIndex < endIndex && isPageNumberPattern(lines[startIndex])) {
+    startIndex++;
+  }
+
+  while (endIndex > startIndex && lines[endIndex - 1] === '') {
+    endIndex--;
   }
   if (endIndex > startIndex && isPageNumberPattern(lines[endIndex - 1])) {
-    endIndex = endIndex - 1;
+    endIndex--;
   }
 
   return lines.slice(startIndex, endIndex).join('\n');

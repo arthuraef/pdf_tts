@@ -1,3 +1,5 @@
+import type { NormalizationMapItem, SourceSpan } from '../oscar-engine/types';
+
 export interface PDFPageContent {
   pageNumber: number;
   text: string;
@@ -48,6 +50,9 @@ export interface TextChunk {
   pageIndex: number;
   chunkIndex: number;
   text: string;
+  sourceOffsets?: SourceSpan[];
+  rawText?: string;
+  normalizationMap?: NormalizationMapItem[];
 }
 
 export interface VoiceOption {
@@ -55,4 +60,3 @@ export interface VoiceOption {
   label: string; // displayed in dropdown
   nativeVoice: SpeechSynthesisVoice;
 }
-
