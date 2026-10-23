@@ -55,6 +55,139 @@ function splitBlockIntoSentences(block: string): string[] {
   return sentences;
 }
 
+const TERMINAL_PUNCT_REGEX = /[.!?…:]["'”»)]*\s*$/;
+const HEADING_START_REGEX =
+  /^(?:#{1,6}\s|[0-9]+(?:\.[0-9]+)*\s+[A-Z]|CAP[ÍI]TULO\b|SE[ÇC][ÃA]O\b|T[ÍI]TULO\b|ARTIGO\b)/i;
+
+/**
+ * Une parágrafos e sentenças fragmentados na transição de páginas de PDFs (Script Stitching - VoiceStudio pattern).
+ * Elimina pausas falsas e mantém rastreabilidade estrita de proveniência (sourceOffsets) em ambas as páginas.
+ */
+export function stitchCrossPageChunks(
+  chunks: TextChunk[],
+  _options?: DiscursiveSegmentationOptions
+): TextChunk[] {
+  if (chunks.length <= 1) return chunks;
+
+  const result: TextChunk[] = [];
+  let i = 0;
+
+  while (i < chunks.length) {
+    const current = chunks[i];
+
+    // Se é o último chunk, adiciona e encerra
+    if (i === chunks.length - 1) {
+      result.push(current);
+      i++;
+      continue;
+    }
+
+    const next = chunks[i + 1];
+
+    // Verifica se há transição entre páginas distintas
+    const currentPage = current.sourceOffsets?.[0]?.page ?? current.pageIndex + 1;
+    const nextPage = next.sourceOffsets?.[0]?.page ?? next.pageIndex + 1;
+
+    const isCrossPage = currentPage !== nextPage;
+    const currentEndsWithoutTerminal = !TERMINAL_PUNCT_REGEX.test(current.text);
+    const nextIsHeading = HEADING_START_REGEX.test(next.text.trim());
+
+    if (isCrossPage && currentEndsWithoutTerminal && !nextIsHeading) {
+      // Frase quebrada entre páginas!
+      const isHyphenated = current.text.endsWith('-');
+      const separator = isHyphenated ? '' : ' ';
+      const cleanCurrent = isHyphenated ? current.text.slice(0, -1) : current.text;
+      const cleanCurrentRaw = isHyphenated
+        ? (current.rawText ?? current.text).slice(0, -1)
+        : (current.rawText ?? current.text);
+
+      // Decompõe next em sentenças para ver se há mais de um pensamento
+      const nextSentences = splitBlockIntoSentences(next.text);
+
+      if (nextSentences.length > 1) {
+        // Apenas a primeira sentença de next completa o pensamento iniciado em current
+        const firstSentence = nextSentences[0];
+        const stitchedText = cleanCurrent + separator + firstSentence;
+        const stitchedRawText = cleanCurrentRaw + separator + firstSentence;
+
+        const firstSentLen = firstSentence.length;
+        const nextOriginalSpan = next.sourceOffsets?.[0];
+        const nextStart = nextOriginalSpan?.start ?? 0;
+
+        const stitchedOffsets: SourceSpan[] = [
+          ...(current.sourceOffsets || []),
+          {
+            page: nextPage,
+            start: nextStart,
+            end: nextStart + firstSentLen,
+          },
+        ];
+
+        result.push({
+          pageIndex: current.pageIndex,
+          chunkIndex: result.length,
+          text: stitchedText,
+          rawText: stitchedRawText,
+          sourceOffsets: stitchedOffsets,
+        });
+
+        // O restante de next é preservado para a próxima iteração
+        const remainderText = next.text.slice(firstSentLen).trim();
+        const remainderRawText = (next.rawText ?? next.text).slice(firstSentLen).trim();
+        const remainderOffsetStart = nextStart + next.text.indexOf(remainderText, firstSentLen);
+
+        chunks[i + 1] = {
+          pageIndex: next.pageIndex,
+          chunkIndex: i + 1,
+          text: remainderText,
+          rawText: remainderRawText,
+          sourceOffsets: [
+            {
+              page: nextPage,
+              start: remainderOffsetStart !== -1 ? remainderOffsetStart : nextStart + firstSentLen,
+              end: nextOriginalSpan?.end ?? nextStart + next.text.length,
+            },
+          ],
+        };
+
+        i++;
+      } else {
+        // next se junta integralmente a current
+        const stitchedText = cleanCurrent + separator + next.text;
+        const stitchedRawText = cleanCurrentRaw + separator + (next.rawText ?? next.text);
+
+        const stitchedOffsets: SourceSpan[] = [
+          ...(current.sourceOffsets || []),
+          ...(next.sourceOffsets || []),
+        ];
+
+        result.push({
+          pageIndex: current.pageIndex,
+          chunkIndex: result.length,
+          text: stitchedText,
+          rawText: stitchedRawText,
+          sourceOffsets: stitchedOffsets,
+        });
+
+        // Pula next pois foi completamente absorvido
+        i += 2;
+      }
+    } else {
+      result.push({
+        ...current,
+        chunkIndex: result.length,
+      });
+      i++;
+    }
+  }
+
+  // Renumera indices sequencialmente
+  return result.map((chunk, idx) => ({
+    ...chunk,
+    chunkIndex: idx,
+  }));
+}
+
 /**
  * Divide o texto em sentenças naturais.
  * Mantido para compatibilidade e testes diretos de sentenças.
@@ -223,14 +356,14 @@ export function splitDiscursiveUnits(
 }
 
 /**
- * Constrói chunks com política discursiva e rastreamento de proveniência de offsets UTF-16
- * a partir das páginas extraídas do PDF.
+ * Constrói chunks com política discursiva, rastreamento de proveniência de offsets UTF-16
+ * e união de frases fragmentadas entre páginas (Script Stitching) a partir das páginas do PDF.
  */
 export function buildChunksFromPages(
   pages: PDFPageContent[],
   options?: DiscursiveSegmentationOptions
 ): TextChunk[] {
-  const chunks: TextChunk[] = [];
+  const initialChunks: TextChunk[] = [];
   let chunkCounter = 0;
 
   pages.forEach((page, pageIdx) => {
@@ -249,7 +382,7 @@ export function buildChunksFromPages(
         },
       ];
 
-      chunks.push({
+      initialChunks.push({
         pageIndex: pageIdx,
         chunkIndex: chunkCounter++,
         text: unit.text,
@@ -259,5 +392,6 @@ export function buildChunksFromPages(
     }
   });
 
-  return chunks;
+  // Aplica o Script Stitching (costura de parágrafos entre páginas do VoiceStudio)
+  return stitchCrossPageChunks(initialChunks, options);
 }

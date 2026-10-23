@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { dehyphenate, applyPtBrLexicon, sanitizeDocumentPages, preReadRepair, repairSeparatedLetters, repairPdfLigatures, normalizeAllCaps } from '../src/oscar-engine/sanitizer/index.ts';
-import { VOICE_STYLES, parseTextToActingScores } from '../src/oscar-engine/director/emotionalParser.ts';
+import { VOICE_STYLES, parseTextToActingScores, AUDIOBOOK_PAUSE_SCHEDULE } from '../src/oscar-engine/director/emotionalParser.ts';
 import { calculateBionicSpeedMultiplier } from '../src/oscar-engine/director/bionicSpeed.ts';
 import { FallbackNativeTts } from '../src/oscar-engine/transport/fallbackNativeTts.ts';
 import { OscarEngine } from '../src/oscar-engine/index.ts';
-import { splitSentenceUnderLimit, splitIntoSentences } from '../src/core/text-chunker.ts';
+import { splitSentenceUnderLimit, splitIntoSentences, stitchCrossPageChunks } from '../src/core/text-chunker.ts';
+import { WebAudioStage } from '../src/oscar-engine/audio-stage/webAudioStage.ts';
 
 // ---------------------------------------------------------------------------
 // 1. Sanitizer Tests
@@ -526,4 +527,171 @@ test('NormalizationMap: tracks provenance for new semiotic classes (currency, me
   const geoItem = result.normalizationMap.find((m) => m.rule_id === 'ptbr.geo.uf.v1');
   assert.ok(geoItem, 'Deve rastrear ptbr.geo.uf.v1');
   assert.equal(geoItem.token_class, 'geo');
+});
+
+// ---------------------------------------------------------------------------
+// 9. VoiceStudio Engineering Patterns: Script Stitching & Audiobook Pauses
+// ---------------------------------------------------------------------------
+test('ScriptStitching: stitchCrossPageChunks heals broken sentences across page boundaries', () => {
+  const pages = [
+    {
+      pageNumber: 1,
+      text: 'O magistrado de primeira instância decidiu que',
+    },
+    {
+      pageNumber: 2,
+      text: 'o réu deveria cumprir a pena em regime aberto.',
+    },
+  ];
+
+  const chunks = buildChunksFromPages(pages);
+
+  assert.equal(chunks.length, 1, 'Deve unir em um único chunk');
+  assert.equal(
+    chunks[0].text,
+    'O magistrado de primeira instância decidiu que o réu deveria cumprir a pena em regime aberto.'
+  );
+  assert.equal(chunks[0].sourceOffsets?.length, 2, 'Deve registrar proveniência de ambas as páginas');
+  assert.equal(chunks[0].sourceOffsets![0].page, 1);
+  assert.equal(chunks[0].sourceOffsets![1].page, 2);
+});
+
+test('ScriptStitching: heals hyphenated words across page boundaries', () => {
+  const pages = [
+    {
+      pageNumber: 1,
+      text: 'Durante o processo de homologa-',
+    },
+    {
+      pageNumber: 2,
+      text: 'ção do acordo judicial entre as partes.',
+    },
+  ];
+
+  const chunks = buildChunksFromPages(pages);
+
+  assert.equal(chunks.length, 1);
+  assert.ok(chunks[0].text.includes('homologação'));
+  assert.equal(chunks[0].sourceOffsets?.length, 2);
+});
+
+test('ScriptStitching: stitches only first sentence when page 2 has multiple sentences', () => {
+  const pages = [
+    {
+      pageNumber: 1,
+      text: 'A testemunha afirmou sob juramento que',
+    },
+    {
+      pageNumber: 2,
+      text: 'não presenciou o ocorrido. O depoimento foi encerrado em seguida.',
+    },
+  ];
+
+  const chunks = buildChunksFromPages(pages);
+
+  assert.equal(chunks.length, 2, 'Primeira frase costurada + segunda frase independente');
+  assert.equal(chunks[0].text, 'A testemunha afirmou sob juramento que não presenciou o ocorrido.');
+  assert.equal(chunks[1].text, 'O depoimento foi encerrado em seguida.');
+  assert.equal(chunks[0].sourceOffsets?.length, 2);
+  assert.equal(chunks[1].sourceOffsets?.length, 1);
+  assert.equal(chunks[1].sourceOffsets![0].page, 2);
+});
+
+test('ScriptStitching: does NOT stitch when page 1 ends with terminal punctuation or page 2 is heading', () => {
+  const pagesPunct = [
+    { pageNumber: 1, text: 'A decisão transitou em julgado.' },
+    { pageNumber: 2, text: 'A execução terá início na próxima semana.' },
+  ];
+  const chunksPunct = buildChunksFromPages(pagesPunct);
+  assert.equal(chunksPunct.length, 2, 'Não deve costurar se termina com ponto final');
+
+  const pagesHeading = [
+    { pageNumber: 1, text: 'Disposições preliminares sobre o tema' },
+    { pageNumber: 2, text: 'CAPÍTULO II - DOS PRAZOS' },
+  ];
+  const chunksHeading = buildChunksFromPages(pagesHeading);
+  assert.equal(chunksHeading.length, 2, 'Não deve costurar se a próxima página começa com capítulo');
+});
+
+test('AudiobookPauses: deterministic pause schedule applies by role, length and punctuation', () => {
+  assert.equal(AUDIOBOOK_PAUSE_SCHEDULE.heading, 900);
+  assert.equal(AUDIOBOOK_PAUSE_SCHEDULE.paragraph, 500);
+  assert.equal(AUDIOBOOK_PAUSE_SCHEDULE.sentence, 280);
+  assert.equal(AUDIOBOOK_PAUSE_SCHEDULE.clause, 140);
+  assert.equal(AUDIOBOOK_PAUSE_SCHEDULE.aside, 250);
+  assert.equal(AUDIOBOOK_PAUSE_SCHEDULE.suspense, 500);
+  assert.equal(AUDIOBOOK_PAUSE_SCHEDULE.urgency, 350);
+
+  const testPhrases = [
+    'CAPÍTULO PRIMEIRO', // heading -> 900ms
+    'O recurso foi julgado improcedente.', // short sentence -> 280ms
+    '— Cuidado, atenção e perigo!', // urgency -> 350ms
+    'Pensou em silêncio por um longo instante...', // suspense -> 500ms
+    'considerando os termos do relatório,', // clause -> 140ms
+    '(observação entre parênteses)', // aside -> 250ms
+    'Este parágrafo possui um texto suficientemente extenso para ultrapassar o limite discursivo padrão de cento e oitenta caracteres e, portanto, ao receber o ponto final deve adotar o tempo de pausa característico de parágrafos completos em audiolivros.', // long paragraph -> 500ms
+  ];
+
+  const scores = parseTextToActingScores(testPhrases, {
+    docId: 10,
+    pageNumber: 1,
+    voiceStyle: 'classic', // pauseMsMultiplier = 1.0
+  });
+
+  assert.equal(scores[0].acoustics.pauseAfterMs, 900);
+  assert.equal(scores[1].acoustics.pauseAfterMs, 280);
+  assert.equal(scores[2].acoustics.pauseAfterMs, 350);
+  assert.equal(scores[3].acoustics.pauseAfterMs, 500);
+  assert.equal(scores[4].acoustics.pauseAfterMs, 140);
+  assert.equal(scores[5].acoustics.pauseAfterMs, 250);
+  assert.equal(scores[6].acoustics.pauseAfterMs, 500);
+});
+
+test('WebAudioStage: unlockAudio executes silent buffer to wake mobile hardware', async () => {
+  const originalWindow = global.window;
+  let bufferCreated = false;
+  let sourceStarted = false;
+
+  class MockAudioContext {
+    state = 'suspended';
+    currentTime = 0;
+    destination = {};
+    async resume() {
+      this.state = 'running';
+    }
+    createBuffer() {
+      bufferCreated = true;
+      return {};
+    }
+    createBufferSource() {
+      return {
+        buffer: null,
+        connect: () => {},
+        start: () => {
+          sourceStarted = true;
+        },
+      };
+    }
+    createGain() {
+      return {
+        gain: { setValueAtTime: () => {} },
+        connect: () => {},
+      };
+    }
+  }
+
+  (global as unknown as { window: unknown }).window = {
+    AudioContext: MockAudioContext,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+
+  const stage = new WebAudioStage();
+  const result = await stage.unlockAudio();
+
+  assert.equal(result, true);
+  assert.equal(bufferCreated, true);
+  assert.equal(sourceStarted, true);
+
+  global.window = originalWindow;
 });

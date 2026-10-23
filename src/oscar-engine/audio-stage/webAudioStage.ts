@@ -41,16 +41,33 @@ export class WebAudioStage {
    * 🛡️ Lei 3: Desbloqueio obrigatório de Autoplay no Mobile (iOS Safari / Android)
    */
   public async ensureUnlocked(): Promise<void> {
+    await this.unlockAudio();
+  }
+
+  /**
+   * 🛡️ Desbloqueio atômico de hardware de áudio no Mobile (VoiceStudio unlockAudio pattern).
+   * Toca um micro-buffer silencioso de 1 amostra para forçar o WebAudio hardware a despertar
+   * sem latência residual em iOS Safari / Android Chrome.
+   */
+  public async unlockAudio(): Promise<boolean> {
     if (!this.audioCtx) {
       this.initAudioContext();
     }
+    if (!this.audioCtx) return false;
 
-    if (this.audioCtx && this.audioCtx.state === 'suspended') {
-      try {
+    try {
+      if (this.audioCtx.state === 'suspended') {
         await this.audioCtx.resume();
-      } catch (err) {
-        console.warn('[WebAudioStage] AudioContext resume error:', err);
       }
+      const silentBuffer = this.audioCtx.createBuffer(1, 1, 22050);
+      const source = this.audioCtx.createBufferSource();
+      source.buffer = silentBuffer;
+      source.connect(this.audioCtx.destination);
+      source.start(0);
+      return true;
+    } catch (err) {
+      console.warn('[WebAudioStage] Mobile audio unlock error:', err);
+      return false;
     }
   }
 
@@ -174,3 +191,28 @@ export class WebAudioStage {
 }
 
 export const webAudioStage = new WebAudioStage();
+
+let unlockListenersInstalled = false;
+
+/**
+ * Registra listeners globais efêmeros nos primeiros gestos do usuário (pointerdown, touchstart, keydown)
+ * para desbloquear instantaneamente o AudioContext em dispositivos móveis (VoiceStudio pattern).
+ */
+export function installGlobalAudioUnlock(stage: WebAudioStage = webAudioStage): void {
+  if (typeof window === 'undefined' || unlockListenersInstalled) return;
+  unlockListenersInstalled = true;
+
+  const unlockHandler = () => {
+    stage.unlockAudio().then((unlocked) => {
+      if (unlocked) {
+        window.removeEventListener('pointerdown', unlockHandler);
+        window.removeEventListener('touchstart', unlockHandler);
+        window.removeEventListener('keydown', unlockHandler);
+      }
+    });
+  };
+
+  window.addEventListener('pointerdown', unlockHandler, { passive: true });
+  window.addEventListener('touchstart', unlockHandler, { passive: true });
+  window.addEventListener('keydown', unlockHandler, { passive: true });
+}

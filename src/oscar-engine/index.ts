@@ -5,10 +5,16 @@
 
 import type { ActingScoreChunk, EngineConfig, EngineStateEvents, VoiceStyle } from './types';
 import { sanitizeDocumentPages } from './sanitizer';
-import { parseTextToActingScores, VOICE_STYLES } from './director';
+import { parseChunksToActingScores, VOICE_STYLES } from './director';
 import { PrefetchQueue, fallbackNativeTts } from './transport';
-import { webAudioStage, audioBuffersToWavBlob, triggerAudioDownload, breathInjector } from './audio-stage';
-import { splitDiscursiveUnits } from '../core/text-chunker';
+import {
+  webAudioStage,
+  audioBuffersToWavBlob,
+  triggerAudioDownload,
+  breathInjector,
+  installGlobalAudioUnlock,
+} from './audio-stage';
+import { buildChunksFromPages } from '../core/text-chunker';
 
 export * from './types';
 export * from './sanitizer';
@@ -44,6 +50,9 @@ export class OscarEngine {
       this.config = { ...this.config, ...config };
     }
     this.prefetchQueue = new PrefetchQueue(webAudioStage.getAudioContext());
+
+    // 📱 Desbloqueio atômico de áudio para dispositivos móveis (VoiceStudio pattern)
+    installGlobalAudioUnlock(webAudioStage);
 
     // Se nenhuma voz foi especificada, escolhe a melhor voz em pt-BR disponível
     if (!this.config.primaryVoice) {
@@ -153,40 +162,29 @@ export class OscarEngine {
     this.stop();
 
     const sanitizedPages = sanitizeDocumentPages(this.rawPagesText);
-    const allChunks: ActingScoreChunk[] = [];
+    const pdfPages = sanitizedPages.map((text, idx) => ({
+      pageNumber: idx + 1,
+      text,
+    }));
 
-    sanitizedPages.forEach((pageContent, pageIdx) => {
-      if (!pageContent.trim()) return;
+    const textChunks = buildChunksFromPages(pdfPages);
+    const chunkInputs = textChunks.map((c) => ({
+      text: c.text,
+      rawText: c.rawText,
+      pageNumber: c.sourceOffsets?.[0]?.page ?? c.pageIndex + 1,
+      chunkIndex: c.chunkIndex,
+      sourceOffsets: c.sourceOffsets,
+    }));
 
-      const discursiveUnits = splitDiscursiveUnits(pageContent);
-      const textStrings = discursiveUnits.map((u) => u.text);
-
-      const pageScoreChunks = parseTextToActingScores(textStrings, {
-        docId: this.docId,
-        pageNumber: pageIdx + 1,
-        voiceStyle: this.config.voiceStyle,
-        primaryVoice: this.config.primaryVoice,
-        secondaryVoice: this.config.secondaryVoice,
-        bionicEnabled: this.config.bionicPacingEnabled,
-      });
-
-      pageScoreChunks.forEach((chunk, cIdx) => {
-        const unit = discursiveUnits[cIdx];
-        if (unit) {
-          chunk.sourceOffsets = [
-            {
-              page: pageIdx + 1,
-              start: unit.sourceStart,
-              end: unit.sourceEnd,
-            },
-          ];
-        }
-      });
-
-      allChunks.push(...pageScoreChunks);
+    this.scoreChunks = parseChunksToActingScores(chunkInputs, {
+      docId: this.docId,
+      pageNumber: 1,
+      voiceStyle: this.config.voiceStyle,
+      primaryVoice: this.config.primaryVoice,
+      secondaryVoice: this.config.secondaryVoice,
+      bionicEnabled: this.config.bionicPacingEnabled,
     });
 
-    this.scoreChunks = allChunks;
     this.prefetchQueue.setChunks(this.scoreChunks);
     this.currentIndex = Math.max(0, Math.min(savedIndex, this.scoreChunks.length - 1));
 
@@ -196,7 +194,7 @@ export class OscarEngine {
   }
 
   /**
-   * Carrega um documento novo e constrói a partitura com segmentação discursiva.
+   * Carrega um documento novo e constrói a partitura com segmentação discursiva e costura de páginas.
    */
   public loadDocument(docId: number, rawPages: string[], startIndex: number = 0): void {
     this.stop();
@@ -204,40 +202,29 @@ export class OscarEngine {
     this.rawPagesText = rawPages;
 
     const sanitizedPages = sanitizeDocumentPages(rawPages);
-    const allChunks: ActingScoreChunk[] = [];
+    const pdfPages = sanitizedPages.map((text, idx) => ({
+      pageNumber: idx + 1,
+      text,
+    }));
 
-    sanitizedPages.forEach((pageContent, pageIdx) => {
-      if (!pageContent.trim()) return;
+    const textChunks = buildChunksFromPages(pdfPages);
+    const chunkInputs = textChunks.map((c) => ({
+      text: c.text,
+      rawText: c.rawText,
+      pageNumber: c.sourceOffsets?.[0]?.page ?? c.pageIndex + 1,
+      chunkIndex: c.chunkIndex,
+      sourceOffsets: c.sourceOffsets,
+    }));
 
-      const discursiveUnits = splitDiscursiveUnits(pageContent);
-      const textStrings = discursiveUnits.map((u) => u.text);
-
-      const pageScoreChunks = parseTextToActingScores(textStrings, {
-        docId: this.docId,
-        pageNumber: pageIdx + 1,
-        voiceStyle: this.config.voiceStyle,
-        primaryVoice: this.config.primaryVoice,
-        secondaryVoice: this.config.secondaryVoice,
-        bionicEnabled: this.config.bionicPacingEnabled,
-      });
-
-      pageScoreChunks.forEach((chunk, cIdx) => {
-        const unit = discursiveUnits[cIdx];
-        if (unit) {
-          chunk.sourceOffsets = [
-            {
-              page: pageIdx + 1,
-              start: unit.sourceStart,
-              end: unit.sourceEnd,
-            },
-          ];
-        }
-      });
-
-      allChunks.push(...pageScoreChunks);
+    this.scoreChunks = parseChunksToActingScores(chunkInputs, {
+      docId: this.docId,
+      pageNumber: 1,
+      voiceStyle: this.config.voiceStyle,
+      primaryVoice: this.config.primaryVoice,
+      secondaryVoice: this.config.secondaryVoice,
+      bionicEnabled: this.config.bionicPacingEnabled,
     });
 
-    this.scoreChunks = allChunks;
     this.prefetchQueue.setChunks(this.scoreChunks);
     this.currentIndex = Math.max(0, Math.min(startIndex, this.scoreChunks.length - 1));
   }
@@ -316,15 +303,19 @@ export class OscarEngine {
 
   /**
    * Altera a velocidade de reprodução e retoma a fala da palavra exata
-   * onde estava, sem reiniciar a frase do início.
+   * onde estava, alinhando ao início da palavra sem reiniciar a frase do início.
    */
   public setBasePlaybackRate(rate: number): void {
     this.config.basePlaybackRate = rate;
     if (this.isPlaying && !this.isPaused) {
       const chunk = this.scoreChunks[this.currentIndex];
-      // Se já estava falando a frase, retoma da palavra atual
+      // Se já estava falando a frase, retoma alinhado ao início da palavra atual
       if (chunk && this.lastSpokenCharIndex > 0 && this.lastSpokenCharIndex < chunk.cleanText.length - 3) {
-        this.playCurrentChunk(this.lastSpokenCharIndex);
+        let wordStartIndex = this.lastSpokenCharIndex;
+        while (wordStartIndex > 0 && !/\s/.test(chunk.cleanText[wordStartIndex - 1])) {
+          wordStartIndex--;
+        }
+        this.playCurrentChunk(wordStartIndex);
       } else {
         this.playCurrentChunk(0);
       }

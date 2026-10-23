@@ -4,7 +4,14 @@
  * prosódia SSML, separação de papéis, estilos de narração e velocidade inteligente.
  */
 
-import type { ActingScoreChunk, SpeakerRole, AcousticProfile, VoiceStyle, VoiceStyleDefinition } from '../types';
+import type {
+  ActingScoreChunk,
+  SpeakerRole,
+  AcousticProfile,
+  VoiceStyle,
+  VoiceStyleDefinition,
+  SourceSpan,
+} from '../types';
 import { calculateBionicSpeedMultiplier } from './bionicSpeed';
 import { castMemory } from './castMemory';
 import { buildSSML } from './ssmlBuilder';
@@ -64,6 +71,20 @@ export const VOICE_STYLES: Record<VoiceStyle, VoiceStyleDefinition> = {
 
 export const USER_VOICE_STYLES: VoiceStyle[] = ['classic', 'dynamic', 'calm'];
 
+/**
+ * Cronograma determinístico de pausas para audiolivro (VoiceStudio silence schedule).
+ * Padroniza os silêncios de acordo com a hierarquia semântica e pontuação.
+ */
+export const AUDIOBOOK_PAUSE_SCHEDULE = {
+  heading: 900,      // Pausa longa de transição de capítulo / título
+  paragraph: 500,    // Término de parágrafo / bloco semântico discursivo
+  sentence: 280,     // Ponto final padrão (. ? !)
+  clause: 140,       // Cláusula / vírgula / dois-pontos / ponto e vírgula / travessão (; : — ,)
+  aside: 250,        // Aparte ou texto entre parênteses
+  suspense: 500,     // Reticências (...)
+  urgency: 350,      // Exclamação dramática (!)
+};
+
 export interface ParseOptions {
   docId: number;
   pageNumber: number;
@@ -73,8 +94,20 @@ export interface ParseOptions {
   bionicEnabled?: boolean;
 }
 
-export function parseTextToActingScores(
-  chunksText: string[],
+export interface ActingChunkInput {
+  text: string;
+  rawText?: string;
+  pageNumber?: number;
+  chunkIndex?: number;
+  sourceOffsets?: SourceSpan[];
+}
+
+/**
+ * Transforma uma lista de descritores de chunks em ActingScoreChunks com metadados
+ * de atuação, áudio espacial e cronograma determinístico de pausas.
+ */
+export function parseChunksToActingScores(
+  inputs: ActingChunkInput[],
   options: ParseOptions
 ): ActingScoreChunk[] {
   const {
@@ -89,9 +122,12 @@ export function parseTextToActingScores(
   const currentStyle = VOICE_STYLES[voiceStyle] || VOICE_STYLES.classic;
   let dialogueToggle = false;
 
-  return chunksText.map((rawText, chunkIndex) => {
-    const cleanText = rawText.trim();
-    const id = `${docId}_p${pageNumber}_c${chunkIndex}`;
+  return inputs.map((input, index) => {
+    const rawText = input.rawText ?? input.text;
+    const cleanText = input.text.trim();
+    const chunkIndex = input.chunkIndex ?? index;
+    const chunkPage = input.pageNumber ?? pageNumber;
+    const id = `${docId}_p${chunkPage}_c${chunkIndex}`;
 
     // 1. Detecta o papel da fala (role)
     let role: SpeakerRole = 'narrator';
@@ -134,7 +170,7 @@ export function parseTextToActingScores(
     const rawBionic = bionicEnabled ? calculateBionicSpeedMultiplier(cleanText) : 1.0;
     const effectiveBionic = parseFloat(rawBionic.toFixed(2));
 
-    let basePause = 300;
+    let basePause = AUDIOBOOK_PAUSE_SCHEDULE.sentence;
     let pitchStr = '+0Hz';
     let rateStr = '+0%';
     let shouldBreath = false;
@@ -142,31 +178,48 @@ export function parseTextToActingScores(
     if (role === 'heading') {
       pitchStr = '-3%';
       rateStr = '-5%';
-      basePause = 800;
+      basePause = AUDIOBOOK_PAUSE_SCHEDULE.heading;
       shouldBreath = false;
     } else if (role === 'aside') {
       pitchStr = '-2%';
       rateStr = '+5%';
-      basePause = 250;
+      basePause = AUDIOBOOK_PAUSE_SCHEDULE.aside;
     } else {
-      // Exclamação ou urgência
+      // Reticências ou calmaria / suspense
       if (
+        cleanText.endsWith('...') ||
+        cleanText.endsWith('…') ||
+        /\b(?:sussurrou|silêncio|triste|calma|pensou)\b/i.test(cleanText)
+      ) {
+        pitchStr = '-3%';
+        rateStr = '-5%';
+        basePause = AUDIOBOOK_PAUSE_SCHEDULE.suspense;
+      }
+      // Exclamação ou urgência
+      else if (
         cleanText.endsWith('!') ||
         /\b(?:gritou|socorro|correu|depressa|perigo|rápido|fogo)\b/i.test(cleanText)
       ) {
         pitchStr = voiceStyle === 'dramatic' ? '+4%' : '+2%';
         rateStr = '+5%';
         shouldBreath = false;
-        basePause = 350;
+        basePause = AUDIOBOOK_PAUSE_SCHEDULE.urgency;
       }
-      // Reticências ou calmaria
-      else if (
-        cleanText.endsWith('...') ||
-        /\b(?:sussurrou|silêncio|triste|calma|pensou)\b/i.test(cleanText)
-      ) {
-        pitchStr = '-3%';
-        rateStr = '-5%';
-        basePause = 500;
+      // Fim de oração / cláusula com pontuação secundária (; : — ,)
+      else if (/[;:,—–]\s*$/.test(cleanText)) {
+        basePause = AUDIOBOOK_PAUSE_SCHEDULE.clause;
+      }
+      // Sentença com pontuação final (. ?)
+      else if (/[.?]["'”»)]*\s*$/.test(cleanText)) {
+        // Se a unidade discursiva for longa (> 180 chars), ritmo de parágrafo
+        basePause =
+          cleanText.length > 180
+            ? AUDIOBOOK_PAUSE_SCHEDULE.paragraph
+            : AUDIOBOOK_PAUSE_SCHEDULE.sentence;
+      }
+      // Fragmento sem pontuação terminal
+      else {
+        basePause = AUDIOBOOK_PAUSE_SCHEDULE.clause;
       }
     }
 
@@ -189,7 +242,7 @@ export function parseTextToActingScores(
 
     return {
       id,
-      pageNumber,
+      pageNumber: chunkPage,
       chunkIndex,
       rawText,
       cleanText,
@@ -197,6 +250,20 @@ export function parseTextToActingScores(
       role,
       voiceId,
       acoustics,
+      sourceOffsets: input.sourceOffsets,
     };
   });
+}
+
+export function parseTextToActingScores(
+  chunksText: string[],
+  options: ParseOptions
+): ActingScoreChunk[] {
+  const inputs: ActingChunkInput[] = chunksText.map((text, idx) => ({
+    text,
+    rawText: text,
+    pageNumber: options.pageNumber,
+    chunkIndex: idx,
+  }));
+  return parseChunksToActingScores(inputs, options);
 }
