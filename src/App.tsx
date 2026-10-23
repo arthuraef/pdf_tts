@@ -378,6 +378,9 @@ export function App() {
           oscar.availableVoices.find((v) => v.id === oscar.selectedVoiceId)?.label ||
           'Google Brasil (Online)'
         }
+        selectedVoiceId={oscar.selectedVoiceId}
+        availableVoices={oscar.availableVoices}
+        onSelectVoice={oscar.setVoice}
         selectedModelId={oscar.selectedModelId}
         onSelectModel={oscar.setModel}
       />

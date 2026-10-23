@@ -18,6 +18,7 @@ import type {
   VoiceStudioModelId,
 } from '../oscar-engine/types';
 import { VOICESTUDIO_PRESETS, VOICESTUDIO_MODELS } from '../oscar-engine/types';
+import type { VoiceOption } from '../types';
 
 interface VoiceStudioModalProps {
   isOpen: boolean;
@@ -27,6 +28,9 @@ interface VoiceStudioModalProps {
   onSelectPreset: (presetId: VoiceStudioPresetId) => void;
   onPreview: (sampleText?: string) => void;
   selectedVoiceName?: string;
+  selectedVoiceId?: string;
+  availableVoices?: VoiceOption[];
+  onSelectVoice?: (voiceURI: string) => void;
   selectedModelId?: VoiceStudioModelId;
   onSelectModel?: (modelId: VoiceStudioModelId) => void;
 }
@@ -47,6 +51,9 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({
   onSelectPreset,
   onPreview,
   selectedVoiceName = 'Google Brasil (Online)',
+  selectedVoiceId,
+  availableVoices,
+  onSelectVoice,
   selectedModelId = 'google_brasil',
   onSelectModel,
 }) => {
@@ -253,6 +260,35 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({
             }`}
             aria-disabled={!isVoiceStudioModel}
           >
+            {/* Seletor da Voz Física do Dispositivo vinculada ao modelo VoiceStudio */}
+            {isVoiceStudioModel && availableVoices && availableVoices.length > 0 && (
+              <div className="space-y-1.5 bg-indigo-950/20 p-3.5 rounded-2xl border border-indigo-900/40">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-200 font-semibold flex items-center gap-1.5">
+                    <Radio className="w-3.5 h-3.5 text-indigo-400" />
+                    Voz do Sistema (Dispositivo) Vinculada
+                  </span>
+                  <span className="text-[10px] text-emerald-400 font-mono">
+                    {selectedVoiceName}
+                  </span>
+                </div>
+                <select
+                  value={selectedVoiceId || ''}
+                  onChange={(e) => onSelectVoice?.(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 text-xs text-white rounded-xl p-2.5 focus:outline-none focus:border-indigo-500 cursor-pointer"
+                >
+                  {availableVoices.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label} {/google/i.test(v.nativeVoice.name) ? '(Google • Rede)' : '(Local • Aceita Pitch)'}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-slate-400">
+                  Vozes locais do sistema (como Luciana, Felipe, Eddy) respondem à afinação (Pitch Shift) e ao timbre selecionado.
+                </p>
+              </div>
+            )}
+
             {/* Presets Grid */}
             <div className="space-y-2.5">
               <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">

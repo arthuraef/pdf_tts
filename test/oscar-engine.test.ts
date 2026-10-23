@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { dehyphenate, applyPtBrLexicon, sanitizeDocumentPages, preReadRepair, repairSeparatedLetters, repairPdfLigatures, normalizeAllCaps } from '../src/oscar-engine/sanitizer/index.ts';
 import { VOICE_STYLES, parseTextToActingScores, AUDIOBOOK_PAUSE_SCHEDULE } from '../src/oscar-engine/director/emotionalParser.ts';
 import { calculateBionicSpeedMultiplier } from '../src/oscar-engine/director/bionicSpeed.ts';
-import { FallbackNativeTts } from '../src/oscar-engine/transport/fallbackNativeTts.ts';
+import { FallbackNativeTts, resolveVoiceForModel } from '../src/oscar-engine/transport/fallbackNativeTts.ts';
 import { OscarEngine } from '../src/oscar-engine/index.ts';
 import { splitSentenceUnderLimit, splitIntoSentences, stitchCrossPageChunks } from '../src/core/text-chunker.ts';
 import { WebAudioStage } from '../src/oscar-engine/audio-stage/webAudioStage.ts';
@@ -883,5 +883,30 @@ test('OscarEngine: setBasePlaybackRate maintains continuity and smoothly adjusts
 
   // When stopped, index remains 0
   assert.equal(engine.getCurrentIndex(), 0);
+});
+
+test('VoiceStudio: resolveVoiceForModel maps distinct voices to different models', () => {
+  const mockVoices = [
+    { name: 'Google português do Brasil', lang: 'pt-BR', voiceURI: 'google_pt_br', localService: false, default: true },
+    { name: 'Luciana', lang: 'pt-BR', voiceURI: 'luciana_pt_br', localService: true, default: false },
+    { name: 'Eddy (Português (Brasil))', lang: 'pt-BR', voiceURI: 'eddy_pt_br', localService: true, default: false },
+    { name: 'Flo (Português (Brasil))', lang: 'pt-BR', voiceURI: 'flo_pt_br', localService: true, default: false },
+    { name: 'Reed (Português (Brasil))', lang: 'pt-BR', voiceURI: 'reed_pt_br', localService: true, default: false },
+  ] as unknown as SpeechSynthesisVoice[];
+
+  const google = resolveVoiceForModel('google_brasil', mockVoices);
+  assert.equal(google?.name, 'Google português do Brasil');
+
+  const cosy = resolveVoiceForModel('voicestudio_cosyvoice', mockVoices);
+  assert.equal(cosy?.name, 'Luciana');
+
+  const f5 = resolveVoiceForModel('voicestudio_f5tts', mockVoices);
+  assert.equal(f5?.name, 'Eddy (Português (Brasil))');
+
+  const chat = resolveVoiceForModel('voicestudio_chattts', mockVoices);
+  assert.equal(chat?.name, 'Flo (Português (Brasil))');
+
+  const chatterbox = resolveVoiceForModel('voicestudio_chatterbox', mockVoices);
+  assert.equal(chatterbox?.name, 'Reed (Português (Brasil))');
 });
 

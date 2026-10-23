@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { OscarEngine, webAudioStage } from '../oscar-engine';
+import { resolveVoiceForModel } from '../oscar-engine/transport';
 import { VOICE_STYLES } from '../oscar-engine/director/emotionalParser';
 import type {
   ActingScoreChunk,
@@ -82,6 +83,13 @@ export function useOscarEngine(document: StoredDocument | null) {
       else if (/luciana/i.test(v.name)) label = 'Luciana (Natural)';
       else if (/felipe/i.test(v.name)) label = 'Felipe (Natural)';
       else if (/leticia/i.test(v.name)) label = 'Leticia (Natural)';
+      else if (/eddy/i.test(v.name)) label = 'Eddy (Natural Masculina)';
+      else if (/flo/i.test(v.name)) label = 'Flo (Natural Expressiva)';
+      else if (/reed/i.test(v.name)) label = 'Reed (Natural Didática)';
+      else if (/rocko/i.test(v.name)) label = 'Rocko (Voz Profunda)';
+      else if (/sandy/i.test(v.name)) label = 'Sandy (Voz Aveludada)';
+      else if (/shelley/i.test(v.name)) label = 'Shelley (Natural)';
+      else if (/joana/i.test(v.name)) label = 'Joana (Natural)';
 
       return {
         id: v.voiceURI,
@@ -95,13 +103,19 @@ export function useOscarEngine(document: StoredDocument | null) {
       if (prev && formatted.some((f) => f.id === prev)) {
         return prev;
       }
+      // Se um modelo VoiceStudio estiver selecionado, resolve para a voz daquele modelo
+      const resolved = resolveVoiceForModel(selectedModelId, rawVoices);
+      if (resolved) {
+        engineRef.current?.setPrimaryVoice(resolved.voiceURI);
+        return resolved.voiceURI;
+      }
       if (formatted.length > 0) {
         engineRef.current?.setPrimaryVoice(formatted[0].id);
         return formatted[0].id;
       }
       return '';
     });
-  }, []);
+  }, [selectedModelId]);
 
   // ---- Inicializa o Oscar Engine no mount -------------------------------
   useEffect(() => {
@@ -424,6 +438,14 @@ export function useOscarEngine(document: StoredDocument | null) {
     }
     engineRef.current?.setSelectedModelId(modelId);
 
+    // Sincroniza a voz ativa da UI com a voz resolvida pelo motor para o modelo
+    const ptVoices = engineRef.current?.getAvailableVoices() || [];
+    const resolved = resolveVoiceForModel(modelId, ptVoices);
+    if (resolved) {
+      setSelectedVoiceId(resolved.voiceURI);
+      engineRef.current?.setPrimaryVoice(resolved.voiceURI);
+    }
+
     const modelDef = VOICESTUDIO_MODELS.find((m) => m.id === modelId);
     if (modelDef?.engine === 'voicestudio' && modelDef.defaultPreset) {
       const presetDef = VOICESTUDIO_PRESETS[modelDef.defaultPreset];
@@ -455,15 +477,15 @@ export function useOscarEngine(document: StoredDocument | null) {
   }, []);
 
   const handlePreviewVoiceStudio = useCallback(
-    (sampleText?: string) => {
+    (sampleText?: string, voiceURI?: string) => {
       engineRef.current?.previewVoiceStudio(
         sampleText,
-        selectedVoiceId,
+        voiceURI,
         voiceStudioConfig,
         selectedModelId
       );
     },
-    [selectedVoiceId, voiceStudioConfig, selectedModelId]
+    [voiceStudioConfig, selectedModelId]
   );
 
   return {

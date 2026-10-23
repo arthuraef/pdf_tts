@@ -16,6 +16,83 @@ export interface NativeSpeakOptions {
   onWordBoundary?: (charIndex: number, charLength: number) => void;
 }
 
+/**
+ * Mapeia inteligentemente um modelo do VoiceStudio ou Google Brasil para a melhor
+ * voz real instalada no navegador/sistema, garantindo timbres distintos e permitindo
+ * que vozes locais aceitem modulação real de pitch.
+ */
+export function resolveVoiceForModel(
+  modelId: string,
+  voices: SpeechSynthesisVoice[]
+): SpeechSynthesisVoice | undefined {
+  if (voices.length === 0) return undefined;
+
+  const ptVoices = voices.filter((v) => {
+    const lang = v.lang.toLowerCase().replace('_', '-');
+    return lang.startsWith('pt');
+  });
+
+  const pool = ptVoices.length > 0 ? ptVoices : voices;
+
+  switch (modelId) {
+    case 'google_brasil': {
+      // 1. Google Brasil HD: Prioriza expressamente a voz oficial do Google
+      return pool.find((v) => /google/i.test(v.name)) || pool[0];
+    }
+
+    case 'voicestudio_cosyvoice': {
+      // 2. CosyVoice (Audiolivro Aveludado): Voz feminina/aveludada NÃO-Google (aceita modulação real de pitch)
+      const nonGoogle = pool.filter((v) => !/google/i.test(v.name));
+      const warmVoice = nonGoogle.find((v) =>
+        /luciana|francisca|shelley|sandy|maria|helena|vitoria|leticia|female|mulher/i.test(v.name)
+      );
+      if (warmVoice) return warmVoice;
+      if (nonGoogle.length > 0) return nonGoogle[0];
+      return pool.find((v) => /google/i.test(v.name)) || pool[0];
+    }
+
+    case 'voicestudio_f5tts': {
+      // 3. F5-TTS (Broadcast Podcast): Voz masculina / forte NÃO-Google
+      const nonGoogle = pool.filter((v) => !/google/i.test(v.name));
+      const maleVoice = nonGoogle.find((v) =>
+        /eddy|rocko|reed|grandpa|felipe|antonio|fabio|daniel|male|homem|joao|ricardo/i.test(v.name)
+      );
+      if (maleVoice) return maleVoice;
+      if (nonGoogle.length > 1) return nonGoogle[1];
+      if (nonGoogle.length > 0) return nonGoogle[0];
+      return pool.find((v) => /google/i.test(v.name)) || pool[0];
+    }
+
+    case 'voicestudio_chattts': {
+      // 4. ChatTTS (Conversacional Suave): Voz expressiva / suave
+      const nonGoogle = pool.filter((v) => !/google/i.test(v.name));
+      const softVoice = nonGoogle.find((v) =>
+        /flo|sandy|shelley|thalita|leticia|joana|camila/i.test(v.name)
+      );
+      if (softVoice) return softVoice;
+      if (nonGoogle.length > 2) return nonGoogle[2];
+      if (nonGoogle.length > 0) return nonGoogle[0];
+      return pool.find((v) => /google/i.test(v.name)) || pool[0];
+    }
+
+    case 'voicestudio_chatterbox': {
+      // 5. ChatterBox (Técnico & Didático): Articulação precisa e didática
+      const nonGoogle = pool.filter((v) => !/google/i.test(v.name));
+      const crispVoice = nonGoogle.find((v) =>
+        /reed|grandma|daniel|francisca|felipe|joana|yara/i.test(v.name)
+      );
+      if (crispVoice) return crispVoice;
+      if (nonGoogle.length > 1) return nonGoogle[nonGoogle.length - 1];
+      if (nonGoogle.length > 0) return nonGoogle[0];
+      return pool.find((v) => /google/i.test(v.name)) || pool[0];
+    }
+
+    default: {
+      return pool.find((v) => v.voiceURI === modelId || v.name === modelId) || pool[0];
+    }
+  }
+}
+
 export class FallbackNativeTts {
   private synth: SpeechSynthesis | null = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
@@ -168,21 +245,24 @@ export class FallbackNativeTts {
       utterance.pitch = Math.max(0.5, Math.min(2.0, options.pitch ?? 1.0));
       utterance.volume = options.volume ?? 1.0;
 
-      // Find Google Brasil or top ranked PT voice
+      // Find appropriate voice for model or URI
       const ptVoices = this.getPortugueseVoices();
       let chosenVoice: SpeechSynthesisVoice | undefined;
 
       if (options.voiceURI) {
-        chosenVoice = ptVoices.find(
-          (v) =>
-            v.voiceURI === options.voiceURI ||
-            v.name.toLowerCase() === options.voiceURI!.toLowerCase() ||
-            v.name.toLowerCase().includes(options.voiceURI!.toLowerCase())
-        );
+        if (options.voiceURI.startsWith('voicestudio_') || options.voiceURI === 'google_brasil') {
+          chosenVoice = resolveVoiceForModel(options.voiceURI, ptVoices);
+        } else {
+          chosenVoice = ptVoices.find(
+            (v) =>
+              v.voiceURI === options.voiceURI ||
+              v.name.toLowerCase() === options.voiceURI!.toLowerCase() ||
+              v.name.toLowerCase().includes(options.voiceURI!.toLowerCase())
+          );
+        }
       }
 
       if (!chosenVoice && ptVoices.length > 0) {
-        // Prioriza a voz Google Brasil expressamente
         chosenVoice = ptVoices.find((v) => /google/i.test(v.name)) || ptVoices[0];
       }
 

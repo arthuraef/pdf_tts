@@ -14,7 +14,7 @@ import type {
 import { VOICESTUDIO_PRESETS, VOICESTUDIO_MODELS } from './types';
 import { sanitizeDocumentPages, applyPtBrLexicon } from './sanitizer';
 import { parseChunksToActingScores, VOICE_STYLES } from './director';
-import { PrefetchQueue, fallbackNativeTts } from './transport';
+import { PrefetchQueue, fallbackNativeTts, resolveVoiceForModel } from './transport';
 import {
   webAudioStage,
   audioBuffersToWavBlob,
@@ -180,6 +180,14 @@ export class OscarEngine {
         this.voiceStudioConfig.pacingMultiplier = modelDef.defaultPacing;
       }
     }
+
+    // Sincroniza a voz primária física com a voz resolvida para este modelo
+    const ptVoices = fallbackNativeTts.getPortugueseVoices();
+    const resolved = resolveVoiceForModel(modelId, ptVoices);
+    if (resolved) {
+      this.config.primaryVoice = resolved.voiceURI;
+    }
+
     if (this.isPlaying && !this.isPaused) {
       this.playCurrentChunk(this.lastSpokenCharIndex || 0);
     }
@@ -465,11 +473,25 @@ export class OscarEngine {
     );
     this.chunkPlaybackRate = effectiveRate;
 
-    // 3. Escolhe a voz adequada para o papel (Teatro 3D alterna vozes em diálogos)
+    // 3. Escolhe a voz adequada para o modelo e papel dramático
     const isCharacter = chunk.role === 'character_a' || chunk.role === 'character_b';
-    const targetVoice = this.config.spatialAudioEnabled && isCharacter && this.config.secondaryVoice
-      ? this.config.secondaryVoice
-      : this.config.primaryVoice;
+    let targetVoice = this.config.primaryVoice;
+    const ptVoices = fallbackNativeTts.getPortugueseVoices();
+    if (this.selectedModelId.startsWith('voicestudio_')) {
+      const resolved = resolveVoiceForModel(this.selectedModelId, ptVoices);
+      if (resolved) {
+        targetVoice = resolved.voiceURI;
+      }
+    } else if (this.selectedModelId === 'google_brasil') {
+      const googleVoice = ptVoices.find((v) => /google/i.test(v.name));
+      if (googleVoice) {
+        targetVoice = googleVoice.voiceURI;
+      }
+    }
+
+    if (this.config.spatialAudioEnabled && isCharacter && this.config.secondaryVoice) {
+      targetVoice = this.config.secondaryVoice;
+    }
 
     // 4. Injeta micro-respiração humana orgânica (disponível em modelos VoiceStudio)
     const breathActive = supportsAcoustic
@@ -557,7 +579,19 @@ export class OscarEngine {
     // Sanitiza obrigatoriamente a amostra pelo Sanitizer PT-BR
     const sanitizedSample = applyPtBrLexicon(sampleText);
 
-    const targetVoice = voiceURI || this.config.primaryVoice;
+    // Resolve a voz específica do modelo garantindo que VoiceStudio NÃO use a voz Google fixa
+    let targetVoice = voiceURI;
+    const ptVoices = fallbackNativeTts.getPortugueseVoices();
+    if (
+      !targetVoice ||
+      targetVoice === 'google_brasil' ||
+      targetVoice.startsWith('voicestudio_') ||
+      (activeModelId.startsWith('voicestudio_') && /google/i.test(targetVoice))
+    ) {
+      const resolved = resolveVoiceForModel(activeModelId, ptVoices);
+      targetVoice = resolved ? resolved.voiceURI : this.config.primaryVoice;
+    }
+
     const styleDef = VOICE_STYLES[this.config.voiceStyle] || VOICE_STYLES.classic;
     const pitchShift = activeModel.supportsAcousticControls && cfg.enabled ? cfg.pitchShift : 0.0;
     const pitch = parseFloat((styleDef.pitchMultiplier * (1.0 + pitchShift)).toFixed(2));
