@@ -17,7 +17,7 @@ export const KNOWN_ACRONYMS = new Set([
   'ONU', 'EUA', 'OEA', 'OMS', 'OTAN', 'FMI', 'OMC', 'UNESCO', 'UNICEF',
   'BNDES', 'IBGE', 'IPEA', 'ANVISA', 'ANATEL', 'ANEEL', 'ANP',
   'SENAI', 'SESC', 'SENAC', 'SEST', 'SENAT', 'SEBRAE',
-  'PDF', 'HTML', 'CSS', 'URL', 'API', 'HTTP', 'HTTPS', 'SDK', 'SQL',
+  'PDF', 'HTML', 'CSS', 'URL', 'API', 'HTTP', 'HTTPS', 'SDK', 'SQL', 'USD', 'BRL', 'EUR',
   'AI', 'IA', 'TI', 'CEO', 'CTO', 'CFO', 'COO', 'MBA', 'DNA', 'RNA',
   'COVID', 'LED', 'USB', 'GPS', 'SMS'
 ]);
@@ -33,7 +33,7 @@ export function repairSeparatedLetters(text: string): string {
   // Letras consoantes que NÃO existem como palavras isoladas em português
   // Se estiverem sozinhas antes de uma palavra, são artefatos de capitulares/OCR
   const NON_WORD_LETTERS = '[BCDFGHJKLMNPQRSTVWXYZ]';
-  const nonWordRegex = new RegExp(`\\b(${NON_WORD_LETTERS})\\s+([A-ZÀ-Úa-zà-ú]{2,})\\b`, 'g');
+  const nonWordRegex = new RegExp(`(?<![\\d°ºª%$/])\\b(${NON_WORD_LETTERS})\\s+([A-ZÀ-Úa-zà-ú]{2,})\\b`, 'g');
   res = res.replace(nonWordRegex, '$1$2');
 
   // Tracking tipográfico (letras isoladas com espaço único formando títulos):

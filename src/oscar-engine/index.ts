@@ -21,6 +21,7 @@ export * from './sanitizer';
 export * from './director';
 export * from './transport';
 export * from './audio-stage';
+export * from './evaluation';
 
 export class OscarEngine {
   private config: EngineConfig = {

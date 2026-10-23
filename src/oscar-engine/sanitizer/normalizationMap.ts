@@ -4,6 +4,7 @@ import { numberToWordsPtBr } from './numberToWords';
 import {
   ORDINAIS_MASCULINOS,
   ROMANOS_INCISOS,
+  SECULOS_ROMANOS,
   ESTADOS_BRASILEIROS,
 } from './ptBrLexicon';
 
@@ -153,7 +154,7 @@ export function sanitizeWithProvenance(
     text,
     'ptbr.repair.ocr_tracking.v1',
     'ocr_repair',
-    new RegExp(`\\b(${NON_WORD_LETTERS})\\s+([A-ZÀ-Úa-zà-ú]{2,})\\b`),
+    new RegExp(`(?<![\\d°ºª%$/])\\b(${NON_WORD_LETTERS})\\s+([A-ZÀ-Úa-zà-ú]{2,})\\b`),
     (m) => `${m[1]}${m[2]}`
   );
 
@@ -252,7 +253,7 @@ export function sanitizeWithProvenance(
     text,
     'ptbr.currency.usd.v1',
     'currency',
-    /(?:USD|U\$)\s*(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)/,
+    /(?:USD|U\$)\s*(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)/i,
     (m) => {
       const rawNum = m[1];
       const inteiro = parseInt(rawNum.replace(/\./g, '').split(',')[0], 10) || 0;
@@ -366,6 +367,20 @@ export function sanitizeWithProvenance(
     /\b(\d+)\s*km\b/i,
     (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} quilômetros`
   );
+  text = runRule(
+    text,
+    'ptbr.measure.unit.v1',
+    'measure',
+    /\b(\d+)\s*ml\b/i,
+    (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} mililitros`
+  );
+  text = runRule(
+    text,
+    'ptbr.measure.unit.v1',
+    'measure',
+    /\b(\d+)\s*mg\b/i,
+    (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} miligramas`
+  );
 
   // 10. UFs brasileiras em contexto geográfico (TTS-Utils)
   text = runRule(
@@ -463,27 +478,17 @@ export function sanitizeWithProvenance(
     }
   );
 
-  // Séculos com algarismos romanos
+  // Séculos com algarismos romanos (I a XXI)
   text = runRule(
     text,
     'ptbr.roman.seculo.v1',
     'roman_numeral',
-    /\b(?:Século|Séc\.)\s+XXI\b/gi,
-    () => 'Século vinte e um'
-  );
-  text = runRule(
-    text,
-    'ptbr.roman.seculo.v1',
-    'roman_numeral',
-    /\b(?:Século|Séc\.)\s+XX\b/gi,
-    () => 'Século vinte'
-  );
-  text = runRule(
-    text,
-    'ptbr.roman.seculo.v1',
-    'roman_numeral',
-    /\b(?:Século|Séc\.)\s+XIX\b/gi,
-    () => 'Século dezenove'
+    /\b(?:Século|Séc\.)\s+([IVX]+)\b/gi,
+    (m) => {
+      const roman = m[1].toUpperCase();
+      const spoken = SECULOS_ROMANOS[roman];
+      return spoken ? `Século ${spoken}` : m[0];
+    }
   );
 
   // Reis e Papas (D. Pedro II)

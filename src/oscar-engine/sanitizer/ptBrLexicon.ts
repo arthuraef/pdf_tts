@@ -50,6 +50,31 @@ export const ROMANOS_INCISOS: Record<string, string> = {
   XVIII: 'dezoito',
   XIX: 'dezenove',
   XX: 'vinte',
+  XXI: 'vinte e um',
+};
+
+export const SECULOS_ROMANOS: Record<string, string> = {
+  I: 'primeiro',
+  II: 'segundo',
+  III: 'terceiro',
+  IV: 'quarto',
+  V: 'quinto',
+  VI: 'sexto',
+  VII: 'sétimo',
+  VIII: 'oitavo',
+  IX: 'nono',
+  X: 'décimo',
+  XI: 'onze',
+  XII: 'doze',
+  XIII: 'treze',
+  XIV: 'quatorze',
+  XV: 'quinze',
+  XVI: 'dezesseis',
+  XVII: 'dezessete',
+  XVIII: 'dezoito',
+  XIX: 'dezenove',
+  XX: 'vinte',
+  XXI: 'vinte e um',
 };
 
 // Meses em português
@@ -342,14 +367,11 @@ export function applyPtBrLexicon(text: string): string {
     return `Inciso ${spoken}`;
   });
 
-  // 8. Séculos com algarismos romanos
-  processed = processed.replace(/\b(?:Século|Séc\.)\s+XXI\b/gi, 'Século vinte e um');
-  processed = processed.replace(/\b(?:Século|Séc\.)\s+XX\b/gi, 'Século vinte');
-  processed = processed.replace(/\b(?:Século|Séc\.)\s+XIX\b/gi, 'Século dezenove');
-  processed = processed.replace(/\b(?:Século|Séc\.)\s+XVIII\b/gi, 'Século dezoito');
-  processed = processed.replace(/\b(?:Século|Séc\.)\s+XVII\b/gi, 'Século dezessete');
-  processed = processed.replace(/\b(?:Século|Séc\.)\s+XVI\b/gi, 'Século dezesseis');
-  processed = processed.replace(/\b(?:Século|Séc\.)\s+XV\b/gi, 'Século quinze');
+  // 8. Séculos com algarismos romanos (I a XXI)
+  processed = processed.replace(/\b(?:Século|Séc\.)\s+([IVX]+)\b/gi, (_match, roman: string) => {
+    const spoken = SECULOS_ROMANOS[roman.toUpperCase()];
+    return spoken ? `Século ${spoken}` : _match;
+  });
 
   // 9. Reis e Papas (D. Pedro II, João Paulo II)
   processed = processed.replace(/\bD\.\s+Pedro\s+II\b/g, 'Dom Pedro segundo');

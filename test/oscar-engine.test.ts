@@ -695,3 +695,57 @@ test('WebAudioStage: unlockAudio executes silent buffer to wake mobile hardware'
 
   global.window = originalWindow;
 });
+
+// ---------------------------------------------------------------------------
+// 10. Bloco 4: Metrics & Goldset Benchmark Qualification (NeMo + TTS-Utils)
+// ---------------------------------------------------------------------------
+import {
+  levenshteinDistance,
+  calculateCER,
+  calculateWER,
+  evaluateGoldset,
+  PTBR_TTS_GOLDSET,
+} from '../src/oscar-engine/evaluation/index.ts';
+
+test('Metrics: levenshteinDistance calculates precise insertion, deletion and substitution cost', () => {
+  assert.equal(levenshteinDistance('', ''), 0);
+  assert.equal(levenshteinDistance('gato', 'gato'), 0);
+  assert.equal(levenshteinDistance('gato', 'jato'), 1); // 1 substituição
+  assert.equal(levenshteinDistance('gato', 'gatos'), 1); // 1 inserção
+  assert.equal(levenshteinDistance('gato', 'ato'), 1); // 1 remoção
+  assert.equal(levenshteinDistance(['o', 'gato'], ['o', 'gato']), 0);
+  assert.equal(levenshteinDistance(['o', 'gato'], ['o', 'cachorro']), 1);
+});
+
+test('Metrics: calculateCER and calculateWER return 0 on acoustic match and positive on errors', () => {
+  // Equivalência fonética ignorando pontuação
+  assert.equal(calculateCER('Dez reais.', 'dez reais'), 0);
+  assert.equal(calculateWER('Dez reais.', 'dez reais'), 0);
+
+  // Erro de caractere em uma palavra
+  const cer = calculateCER('dez reai', 'dez reais');
+  assert.ok(cer > 0 && cer < 0.2);
+
+  // Erro de palavra inteira
+  const wer = calculateWER('dez dólares', 'dez reais');
+  assert.equal(wer, 0.5); // 1 palavra errada de 2
+});
+
+test('Goldset: executes full NeMo and TTS-Utils benchmark with 100% accuracy and 0% WER', () => {
+  assert.ok(PTBR_TTS_GOLDSET.length >= 20, 'Goldset deve conter pelo menos 20 casos canônicos');
+
+  const report = evaluateGoldset(PTBR_TTS_GOLDSET);
+
+  if (report.failures.length > 0) {
+    console.error('Falhas no Goldset:', JSON.stringify(report.failures, null, 2));
+  }
+
+  assert.equal(
+    report.failedCases,
+    0,
+    `Todos os casos do goldset devem passar (Falhas: ${report.failures.map((f) => f.id).join(', ')})`
+  );
+  assert.equal(report.accuracyPct, 100.0);
+  assert.equal(report.meanCER, 0);
+  assert.equal(report.meanWER, 0);
+});
