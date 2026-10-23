@@ -1,7 +1,9 @@
 {
   "name": "pdf_tts",
   "private": true,
-  "version": "0.0.0",
+  "version": "3.0.0",
+  "description": "Leitor e reprodutor de PDFs em audiolivro 100% client-side com OscarVoice Engine v3.0, VoiceStudio Enhancer e normalização PT-BR.",
+  "author": "arthuraef <arthur.aef@gmail.com>",
   "type": "module",
   "scripts": {
     "dev": "vite",

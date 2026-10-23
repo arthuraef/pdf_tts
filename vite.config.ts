@@ -12,9 +12,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
       manifest: {
-        name: 'PDF Voice - Leitor em Voz Alta',
+        name: 'PDF Voice • Audiolivros com OscarVoice v3.0',
         short_name: 'PDF Voice',
-        description: 'Leia seus arquivos PDF em voz alta com velocidade customizada e salvamento de progresso.',
+        description: 'Transforme livros e PDFs em audiolivros de alta fidelidade 100% offline com OscarVoice Engine e VoiceStudio Enhancer.',
         theme_color: '#0f172a',
         background_color: '#0f172a',
         display: 'standalone',
