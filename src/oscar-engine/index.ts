@@ -127,34 +127,12 @@ export class OscarEngine {
 
   public setVoiceStyle(style: VoiceStyle): void {
     this.config.voiceStyle = style;
-    const wasPlaying = this.isPlaying;
     this.rebuildChunks();
-    if (!wasPlaying) {
-      const styleDef = VOICE_STYLES[style] || VOICE_STYLES.classic;
-      const previewText = `${styleDef.label} ativado.`;
-      const targetVoice = this.config.primaryVoice;
-      fallbackNativeTts.preview(
-        previewText,
-        targetVoice,
-        parseFloat((this.config.basePlaybackRate * styleDef.rateMultiplier).toFixed(2)),
-        styleDef.pitchMultiplier
-      );
-    }
   }
 
   public setPrimaryVoice(voiceURI: string): void {
     this.config.primaryVoice = voiceURI;
-    const wasPlaying = this.isPlaying;
     this.rebuildChunks();
-    if (!wasPlaying) {
-      const styleDef = VOICE_STYLES[this.config.voiceStyle] || VOICE_STYLES.classic;
-      fallbackNativeTts.preview(
-        'Voz selecionada.',
-        voiceURI,
-        parseFloat((this.config.basePlaybackRate * styleDef.rateMultiplier).toFixed(2)),
-        styleDef.pitchMultiplier
-      );
-    }
   }
 
   public setSecondaryVoice(voiceURI: string): void {

@@ -227,25 +227,38 @@ export class FallbackNativeTts {
       }
     }
 
-    // Se já estava falando, cancela antes de iniciar
+    // Se já estava falando ou com itens pendentes, cancela e descongela o canal IPC
     const wasSpeaking = this.synth.speaking || this.synth.pending;
     if (wasSpeaking) {
       try {
         this.synth.cancel();
+        // Em Chromium/WebKit, cancel() pode deixar o sintetizador em estado pausado; resume() destrava a fila
+        this.synth.resume();
       } catch {
         // ignore
       }
     }
 
+    let hasRecoveredWithFallback = false;
+
     const doSpeak = () => {
       if (!this.synth) return;
+
+      // Garante que o sintetizador não esteja congelado antes de enfileirar
+      if (this.synth.paused) {
+        try {
+          this.synth.resume();
+        } catch {
+          // ignore
+        }
+      }
 
       const utterance = new SpeechSynthesisUtterance(options.text);
       utterance.rate = Math.max(0.5, Math.min(2.0, options.rate ?? 1.0));
       utterance.pitch = Math.max(0.5, Math.min(2.0, options.pitch ?? 1.0));
       utterance.volume = options.volume ?? 1.0;
 
-      // Find appropriate voice for model or URI
+      // Localiza a voz apropriada para o modelo ou URI
       const ptVoices = this.getPortugueseVoices();
       let chosenVoice: SpeechSynthesisVoice | undefined;
 
@@ -268,7 +281,8 @@ export class FallbackNativeTts {
 
       if (chosenVoice) {
         utterance.voice = chosenVoice;
-        utterance.lang = chosenVoice.lang;
+        // BCP 47 rigoroso: substitui '_' por '-' para evitar que o Chromium rejeite a voz
+        utterance.lang = (chosenVoice.lang || 'pt-BR').replace(/_/g, '-');
       } else {
         utterance.lang = 'pt-BR';
       }
@@ -297,8 +311,39 @@ export class FallbackNativeTts {
         if (typeof window !== 'undefined') {
           (window as unknown as { __currentUtterance?: SpeechSynthesisUtterance | null }).__currentUtterance = null;
         }
+
         if (e.error !== 'canceled' && e.error !== 'interrupted') {
           console.warn('[FallbackNativeTts] Utterance error:', e.error);
+
+          // Auto-recuperação sem dropouts: se uma voz do sistema falhar (ex: pacote de voz não baixado no SO),
+          // tenta imediatamente com a voz padrão mais estável do navegador para não deixar o usuário no silêncio
+          if (!hasRecoveredWithFallback && ptVoices.length > 0) {
+            const fallbackVoice = ptVoices.find((v) => /google/i.test(v.name)) || ptVoices[0];
+            if (fallbackVoice && utterance.voice !== fallbackVoice) {
+              hasRecoveredWithFallback = true;
+              console.info('[FallbackNativeTts] Recuperando reprodução com voz estável:', fallbackVoice.name);
+              const retryUtterance = new SpeechSynthesisUtterance(options.text);
+              retryUtterance.rate = utterance.rate;
+              retryUtterance.pitch = utterance.pitch;
+              retryUtterance.volume = utterance.volume;
+              retryUtterance.voice = fallbackVoice;
+              retryUtterance.lang = (fallbackVoice.lang || 'pt-BR').replace(/_/g, '-');
+              retryUtterance.onstart = utterance.onstart;
+              retryUtterance.onend = utterance.onend;
+              retryUtterance.onboundary = utterance.onboundary;
+              retryUtterance.onerror = () => {
+                options.onError?.(e);
+              };
+              this.currentUtterance = retryUtterance;
+              try {
+                this.synth?.speak(retryUtterance);
+                return;
+              } catch {
+                // fallback falhou, repassa erro original
+              }
+            }
+          }
+
           options.onError?.(e);
         }
       };
@@ -326,9 +371,9 @@ export class FallbackNativeTts {
       }
     };
 
-    // Performance máxima: se o sintetizador estava ocioso, fala instantaneamente (0ms de lag)
+    // Respeita o ciclo assíncrono de cancelamento do Chromium (60ms) para evitar cancelamento da nova fala
     if (wasSpeaking) {
-      this.speakTimeout = window.setTimeout(doSpeak, 15);
+      this.speakTimeout = window.setTimeout(doSpeak, 60);
     } else {
       doSpeak();
     }

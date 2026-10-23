@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, RotateCcw, ChevronLeft, ChevronRight, Gauge, Star, Sparkles } from 'lucide-react';
-import type { VoiceStyle, VoiceStyleDefinition } from '../oscar-engine/types';
+import { Play, Pause, RotateCcw, ChevronLeft, ChevronRight, Gauge, Star, Sparkles, Radio } from 'lucide-react';
+import type { VoiceStyle, VoiceStyleDefinition, VoiceStudioModelId, VoiceModelDefinition } from '../oscar-engine/types';
 
 interface PlayerControlsProps {
   isPlaying: boolean;
@@ -20,6 +20,9 @@ interface PlayerControlsProps {
   onHighlightCurrent?: () => void;
   onOpenVoiceStudio?: () => void;
   selectedModelLabel?: string;
+  selectedModelId?: VoiceStudioModelId;
+  availableVoiceModels?: VoiceModelDefinition[];
+  onSelectModel?: (modelId: VoiceStudioModelId) => void;
   disabled?: boolean;
 }
 
@@ -41,6 +44,9 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   onHighlightCurrent,
   onOpenVoiceStudio,
   selectedModelLabel,
+  selectedModelId,
+  availableVoiceModels,
+  onSelectModel,
   disabled = false,
 }) => {
   // Amortecedor (Debounce de 200ms) para o slider de velocidade
@@ -103,27 +109,53 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
         </div>
       )}
 
-      {/* 1. Narration Style Selector: Narrador, Dinâmico, Calmo */}
+      {/* 1. Model Selector & VoiceStudio Access */}
+      <div className="space-y-1.5 bg-slate-950/60 p-2.5 rounded-2xl border border-slate-800/80">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-[11px] font-mono uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1.5">
+            <Radio className="w-3.5 h-3.5 text-indigo-400" />
+            Modelo de Voz
+          </span>
+          {onOpenVoiceStudio && (
+            <button
+              type="button"
+              onClick={onOpenVoiceStudio}
+              className="text-[10px] text-indigo-300 hover:text-white font-mono flex items-center gap-1 cursor-pointer bg-indigo-500/20 hover:bg-indigo-500/30 px-2.5 py-0.5 rounded-full border border-indigo-500/30 transition shadow-sm"
+              title="Abrir VoiceStudio • Ajustar Timbre, Respiração e Cadência"
+            >
+              <Sparkles className="w-3 h-3 text-indigo-400" />
+              <span>{selectedModelLabel ? `VoiceStudio (${selectedModelLabel})` : 'VoiceStudio • Aprimorador'}</span>
+            </button>
+          )}
+        </div>
+
+        {availableVoiceModels && availableVoiceModels.length > 0 && onSelectModel && (
+          <div className="relative">
+            <select
+              value={selectedModelId || 'google_brasil'}
+              onChange={(e) => onSelectModel(e.target.value as VoiceStudioModelId)}
+              disabled={disabled}
+              className="w-full bg-slate-900 border border-slate-700/80 text-xs text-white rounded-xl py-2 px-3 focus:outline-none focus:border-indigo-500 cursor-pointer"
+            >
+              {availableVoiceModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.emoji} {m.label} {m.engine === 'system' ? '• (Padrão Online)' : '• (Voz de Estúdio)'}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* 2. Narration Style Selector: Narrador, Dinâmico, Calmo */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-mono uppercase tracking-wider text-slate-400 font-semibold">
             Estilo de Narração
           </span>
-          {onOpenVoiceStudio ? (
-            <button
-              type="button"
-              onClick={onOpenVoiceStudio}
-              className="text-[10px] text-indigo-400 hover:text-indigo-300 font-mono flex items-center gap-1 hover:underline cursor-pointer bg-indigo-500/10 hover:bg-indigo-500/20 px-2 py-0.5 rounded-full border border-indigo-500/20 transition"
-              title="Abrir VoiceStudio • Trocar Modelo ou Ajustar Áudio"
-            >
-              <Sparkles className="w-3 h-3 text-indigo-400" />
-              <span>{selectedModelLabel || 'Google Brasil HD'}</span>
-            </button>
-          ) : (
-            <span className="text-[10px] text-indigo-400 font-mono">
-              Voz: {selectedModelLabel || 'Google Brasil HD'}
-            </span>
-          )}
+          <span className="text-[10px] text-slate-400 font-mono">
+            Modulação Dramática
+          </span>
         </div>
 
         <div className="grid grid-cols-3 gap-2 bg-slate-950/80 p-1.5 rounded-2xl border border-slate-800">

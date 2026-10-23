@@ -26,7 +26,7 @@ interface VoiceStudioModalProps {
   config: VoiceStudioEnhancerConfig;
   onChangeConfig: (patch: Partial<VoiceStudioEnhancerConfig>) => void;
   onSelectPreset: (presetId: VoiceStudioPresetId) => void;
-  onPreview: (sampleText?: string) => void;
+  onPreview: (sampleText?: string, voiceURI?: string) => void;
   selectedVoiceName?: string;
   selectedVoiceId?: string;
   availableVoices?: VoiceOption[];
@@ -70,7 +70,7 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({
 
   const handleTestAudio = () => {
     setIsPlayingPreview(true);
-    onPreview(sampleText);
+    onPreview(sampleText, selectedVoiceId);
     setTimeout(() => setIsPlayingPreview(false), 4500);
   };
 

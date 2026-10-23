@@ -319,6 +319,9 @@ export function App() {
                   ? `${oscar.activeVoiceModel.emoji} ${oscar.activeVoiceModel.label.split('(')[0].trim()}`
                   : 'Google Brasil HD'
               }
+              selectedModelId={oscar.selectedModelId}
+              availableVoiceModels={oscar.availableVoiceModels}
+              onSelectModel={oscar.setModel}
               disabled={oscar.totalChunks === 0}
             />
           </div>

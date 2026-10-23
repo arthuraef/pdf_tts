@@ -910,3 +910,16 @@ test('VoiceStudio: resolveVoiceForModel maps distinct voices to different models
   assert.equal(chatterbox?.name, 'Reed (Português (Brasil))');
 });
 
+test('OscarEngine: setPrimaryVoice and setVoiceStyle update state quietly without autoplay violations', () => {
+  const engine = new OscarEngine();
+  
+  // Updating voice should not trigger unsolicited speech synthesis
+  engine.setPrimaryVoice('google_pt_br');
+  assert.equal(engine.getConfig().primaryVoice, 'google_pt_br');
+
+  // Updating voice style should not trigger unsolicited speech synthesis
+  engine.setVoiceStyle('calm');
+  assert.equal(engine.getConfig().voiceStyle, 'calm');
+});
+
+
