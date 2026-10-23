@@ -28,6 +28,11 @@ export type TokenClass =
   | 'abbreviation'
   | 'currency'
   | 'number'
+  | 'measure'
+  | 'datetime'
+  | 'address'
+  | 'geo'
+  | 'decimal'
   | 'other';
 
 export type NormalizationDecision = 'normalized' | 'preserved' | 'needs_review' | 'intentionally_silent';

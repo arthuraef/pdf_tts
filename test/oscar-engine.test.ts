@@ -360,7 +360,7 @@ test('NormalizationMap: sanitizeWithProvenance tracks spans, rule IDs, and token
   // Spoken text verification
   assert.ok(result.spokenText.includes('flecha'));
   assert.ok(result.spokenText.includes('Artigo quinto'));
-  assert.ok(result.spokenText.includes('50 reais'));
+  assert.ok(result.spokenText.includes('cinquenta reais'));
 });
 
 test('DiscursiveSegmentation: preserves paragraph context when within budget, falls back hierarchically', () => {
@@ -429,4 +429,101 @@ test('OscarEngine: loadDocument sets source offsets on ActingScoreChunks', () =>
   assert.equal(chunks[0].sourceOffsets![0].page, 1);
   assert.ok(typeof chunks[0].sourceOffsets![0].start === 'number');
   assert.ok(typeof chunks[0].sourceOffsets![0].end === 'number');
+});
+
+
+// ---------------------------------------------------------------------------
+// 8. NeMo & TTS-Utils Semiotic Normalization Tests (Bloco 1)
+// ---------------------------------------------------------------------------
+import { numberToWordsPtBr } from '../src/oscar-engine/sanitizer/numberToWords.ts';
+
+test('numberToWordsPtBr: converts integers up to millions with Brazilian grammar', () => {
+  assert.equal(numberToWordsPtBr(0), 'zero');
+  assert.equal(numberToWordsPtBr(1), 'um');
+  assert.equal(numberToWordsPtBr(14), 'quatorze');
+  assert.equal(numberToWordsPtBr(21), 'vinte e um');
+  assert.equal(numberToWordsPtBr(100), 'cem');
+  assert.equal(numberToWordsPtBr(105), 'cento e cinco');
+  assert.equal(numberToWordsPtBr(200), 'duzentos');
+  assert.equal(numberToWordsPtBr(1000), 'mil');
+  assert.equal(numberToWordsPtBr(1500), 'mil e quinhentos');
+  assert.equal(numberToWordsPtBr(3200), 'três mil e duzentos');
+  assert.equal(numberToWordsPtBr(1000000), 'um milhão');
+});
+
+test('Lexicon: converts complex Brazilian currency with thousand separators and cents', () => {
+  // TTS-Utils pattern
+  const input = 'O valor total foi R$ 3.200,75 com entrada de R$ 1.500,00 e taxa de USD 100.';
+  const output = applyPtBrLexicon(input);
+
+  assert.ok(output.includes('três mil e duzentos reais e setenta e cinco centavos'));
+  assert.ok(output.includes('mil e quinhentos reais'));
+  assert.ok(output.includes('cem dólares'));
+});
+
+test('Lexicon: converts dates and times into fluid Portuguese', () => {
+  // NeMo + TTS-Utils pattern
+  const input = 'Audiência em 23/10/2026 às 14:30 e reunião às 10h.';
+  const output = applyPtBrLexicon(input);
+
+  assert.ok(output.includes('vinte e três de outubro de dois mil e vinte e seis'));
+  assert.ok(output.includes('quatorze horas e trinta minutos'));
+  assert.ok(output.includes('dez horas'));
+});
+
+test('Lexicon: converts measures, percentages, and unglues numbers from units', () => {
+  // NeMo pattern
+  const input = 'Velocidade máxima de 50km/h com carga de 10kg em área de 100m² a 25ºC com taxa de 12,5%.';
+  const output = applyPtBrLexicon(input);
+
+  assert.ok(output.includes('cinquenta quilômetros por hora'));
+  assert.ok(output.includes('dez quilos'));
+  assert.ok(output.includes('cem metros quadrados'));
+  assert.ok(output.includes('vinte e cinco graus celsius'));
+  assert.ok(output.includes('doze vírgula cinco por cento'));
+});
+
+test('Lexicon: expands addresses, Brazilian UFs in context, and Latin abbreviations', () => {
+  // TTS-Utils pattern
+  const input = 'Escritório na Av. Paulista, nº 1000 - SP. Julgamento vs. réu, etc. Fundado em 500 a.C.';
+  const output = applyPtBrLexicon(input);
+
+  assert.ok(output.includes('Avenida Paulista'));
+  assert.ok(output.includes('número 1000'));
+  assert.ok(output.includes('São Paulo'));
+  assert.ok(output.includes('versus'));
+  assert.ok(output.includes('êti cétera'));
+  assert.ok(output.includes('antes de Cristo'));
+});
+
+test('NormalizationMap: tracks provenance for new semiotic classes (currency, measure, datetime, address, geo)', () => {
+  const input = 'Processo em 23/10/2026 na Av. Brasil, nº 50 - RJ por R$ 3.200,75 a 80km/h.';
+  const result = sanitizeWithProvenance(input, 1);
+
+  assert.ok(result.spokenText.length > 0);
+
+  // Check currency rule
+  const currencyItem = result.normalizationMap.find((m) => m.rule_id === 'ptbr.currency.brl.v1');
+  assert.ok(currencyItem, 'Deve rastrear ptbr.currency.brl.v1');
+  assert.equal(currencyItem.token_class, 'currency');
+
+  // Check datetime rule
+  const dateItem = result.normalizationMap.find((m) => m.rule_id === 'ptbr.datetime.date.v1');
+  assert.ok(dateItem, 'Deve rastrear ptbr.datetime.date.v1');
+  assert.equal(dateItem.token_class, 'datetime');
+
+  // Check measure rule
+  const measureItem = result.normalizationMap.find((m) => m.rule_id === 'ptbr.measure.unit.v1');
+  assert.ok(measureItem, 'Deve rastrear ptbr.measure.unit.v1');
+  assert.equal(measureItem.token_class, 'measure');
+
+  // Check address rule
+  const addressItem = result.normalizationMap.find((m) => m.rule_id === 'ptbr.address.logradouro.v1');
+  assert.ok(addressItem, 'Deve rastrear ptbr.address.logradouro.v1');
+  assert.equal(addressItem.token_class, 'address');
+
+  // Check geo UF rule
+  const geoItem = result.normalizationMap.find((m) => m.rule_id === 'ptbr.geo.uf.v1');
+  assert.ok(geoItem, 'Deve rastrear ptbr.geo.uf.v1');
+  assert.equal(geoItem.token_class, 'geo');
 });

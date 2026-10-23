@@ -14,6 +14,7 @@ export * from './ptBrLexicon';
 export * from './headerFooterFilter';
 export * from './textErrorRepair';
 export * from './normalizationMap';
+export * from './numberToWords';
 
 /**
  * Higieniza o texto de uma única página ou bloco de texto:

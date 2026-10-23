@@ -1,5 +1,11 @@
 import type { NormalizationMapItem, TokenClass } from '../types';
 import { KNOWN_ACRONYMS } from './textErrorRepair';
+import { numberToWordsPtBr } from './numberToWords';
+import {
+  ORDINAIS_MASCULINOS,
+  ROMANOS_INCISOS,
+  ESTADOS_BRASILEIROS,
+} from './ptBrLexicon';
 
 export interface SanitizationResult {
   spokenText: string;
@@ -7,45 +13,26 @@ export interface SanitizationResult {
   warnings: string[];
 }
 
-const ORDINAIS_MASCULINOS: Record<string, string> = {
-  '1': 'primeiro',
-  '2': 'segundo',
-  '3': 'terceiro',
-  '4': 'quarto',
-  '5': 'quinto',
-  '6': 'sexto',
-  '7': 'sétimo',
-  '8': 'oitavo',
-  '9': 'nono',
-  '10': 'décimo',
-};
-
-const ROMANOS_INCISOS: Record<string, string> = {
-  I: 'primeiro',
-  II: 'segundo',
-  III: 'terceiro',
-  IV: 'quarto',
-  V: 'quinto',
-  VI: 'sexto',
-  VII: 'sétimo',
-  VIII: 'oitavo',
-  IX: 'nono',
-  X: 'décimo',
-  XI: 'onze',
-  XII: 'doze',
-  XIII: 'treze',
-  XIV: 'quatorze',
-  XV: 'quinze',
-  XVI: 'dezesseis',
-  XVII: 'dezessete',
-  XVIII: 'dezoito',
-  XIX: 'dezenove',
-  XX: 'vinte',
-};
+const MESES_PTBR = [
+  '',
+  'janeiro',
+  'fevereiro',
+  'março',
+  'abril',
+  'maio',
+  'junho',
+  'julho',
+  'agosto',
+  'setembro',
+  'outubro',
+  'novembro',
+  'dezembro',
+];
 
 /**
- * Aplica um conjunto ordenado de regras de normalização, mantendo a proveniência exata
+ * Aplica um conjunto ordenado de regras de normalização semiótica, mantendo a proveniência exata
  * dos spans UTF-16 em relação ao texto original e ao texto falado gerado.
+ * Alinhado às gramáticas do NVIDIA NeMo-text-processing e do Grupo RAIA (TTS-Utils).
  */
 export function sanitizeWithProvenance(
   rawText: string,
@@ -69,14 +56,16 @@ export function sanitizeWithProvenance(
   ): string {
     let result = '';
     let lastIndex = 0;
-    const globalRegex = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
+    const globalRegex = new RegExp(
+      regex.source,
+      regex.flags.includes('g') ? regex.flags : regex.flags + 'g'
+    );
 
     let match: RegExpExecArray | null;
     while ((match = globalRegex.exec(currentText)) !== null) {
       const matchStart = match.index;
       const matchEnd = matchStart + match[0].length;
 
-      // Adiciona o texto entre a última correspondência e o match atual
       result += currentText.slice(lastIndex, matchStart);
 
       const replacement = replaceFn(match);
@@ -168,7 +157,6 @@ export function sanitizeWithProvenance(
     (m) => `${m[1]}${m[2]}`
   );
 
-  // Títulos com tracking ("C A P Í T U L O" -> "CAPÍTULO")
   text = runRule(
     text,
     'ptbr.repair.ocr_tracking.v1',
@@ -205,7 +193,7 @@ export function sanitizeWithProvenance(
     (m) => {
       const word = m[0];
       if (KNOWN_ACRONYMS.has(word)) {
-        return word; // Preserva sigla
+        return word; // Preserva sigla legítima
       }
       return word.charAt(0) + word.slice(1).toLowerCase();
     }
@@ -220,7 +208,210 @@ export function sanitizeWithProvenance(
     () => ''
   );
 
-  // 6. Artigos de Lei (Art. 1º até Art. 10º -> Artigo ordinal, 11+ -> cardinal)
+  // 6. Moeda brasileira com separador de milhar e centavos (TTS-Utils)
+  text = runRule(
+    text,
+    'ptbr.currency.brl.v1',
+    'currency',
+    /R\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)/,
+    (m) => {
+      const rawNum = m[1];
+      let inteiro = 0;
+      let centavos = 0;
+
+      if (rawNum.includes(',')) {
+        const [inteiroStr, decStr] = rawNum.replace(/\./g, '').split(',');
+        inteiro = parseInt(inteiroStr, 10) || 0;
+        const paddedDec = (decStr + '00').slice(0, 2);
+        centavos = parseInt(paddedDec, 10) || 0;
+      } else {
+        inteiro = parseInt(rawNum.replace(/\./g, ''), 10) || 0;
+      }
+
+      const parts: string[] = [];
+      if (inteiro > 0) {
+        const wordInt = numberToWordsPtBr(inteiro);
+        const currWord = inteiro === 1 ? 'real' : 'reais';
+        parts.push(`${wordInt} ${currWord}`);
+      }
+      if (centavos > 0) {
+        const wordCent = numberToWordsPtBr(centavos);
+        const centWord = centavos === 1 ? 'centavo' : 'centavos';
+        if (inteiro > 0) {
+          parts.push(`e ${wordCent} ${centWord}`);
+        } else {
+          parts.push(`${wordCent} ${centWord}`);
+        }
+      }
+      return parts.join(' ') || 'zero reais';
+    }
+  );
+
+  // Moeda USD
+  text = runRule(
+    text,
+    'ptbr.currency.usd.v1',
+    'currency',
+    /(?:USD|U\$)\s*(\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:,\d+)?)/,
+    (m) => {
+      const rawNum = m[1];
+      const inteiro = parseInt(rawNum.replace(/\./g, '').split(',')[0], 10) || 0;
+      const wordInt = numberToWordsPtBr(inteiro);
+      return `${wordInt} dólares`;
+    }
+  );
+
+  // 7. Datas completas (NeMo & TTS-Utils)
+  text = runRule(
+    text,
+    'ptbr.datetime.date.v1',
+    'datetime',
+    /\b([0-2]?\d|3[01])[\/\.-](0?[1-9]|1[0-2])[\/\.-](\d{4})\b/,
+    (m) => {
+      const day = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10);
+      const year = parseInt(m[3], 10);
+
+      const daySpoken = day === 1 ? 'primeiro' : numberToWordsPtBr(day);
+      const monthSpoken = MESES_PTBR[month] || '';
+      const yearSpoken = numberToWordsPtBr(year);
+
+      return `${daySpoken} de ${monthSpoken} de ${yearSpoken}`;
+    }
+  );
+
+  // 8. Horários (NeMo & TTS-Utils)
+  text = runRule(
+    text,
+    'ptbr.datetime.time.v1',
+    'datetime',
+    /\b([0-1]?\d|2[0-3])h([0-5]\d)?(?:min)?\b/i,
+    (m) => {
+      const hour = parseInt(m[1], 10);
+      const hourWord = hour === 1 ? 'uma hora' : `${numberToWordsPtBr(hour)} horas`;
+      if (m[2]) {
+        const min = parseInt(m[2], 10);
+        if (min > 0) {
+          const minWord = min === 1 ? 'um minuto' : `${numberToWordsPtBr(min)} minutos`;
+          return `${hourWord} e ${minWord}`;
+        }
+      }
+      return hourWord;
+    }
+  );
+
+  text = runRule(
+    text,
+    'ptbr.datetime.time.v1',
+    'datetime',
+    /\b([0-1]?\d|2[0-3]):([0-5]\d)\b/,
+    (m) => {
+      const hour = parseInt(m[1], 10);
+      const min = parseInt(m[2], 10);
+      const hourWord = hour === 1 ? 'uma hora' : `${numberToWordsPtBr(hour)} horas`;
+      if (min === 0) {
+        return hourWord;
+      }
+      return `${hourWord} e ${numberToWordsPtBr(min)} minutos`;
+    }
+  );
+
+  // 9. Medidas e Grandezas (NeMo + TTS-Utils)
+  text = runRule(
+    text,
+    'ptbr.measure.unit.v1',
+    'measure',
+    /\b(\d+)\s*(?:km\/h|Km\/h)\b/i,
+    (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} quilômetros por hora`
+  );
+  text = runRule(
+    text,
+    'ptbr.measure.unit.v1',
+    'measure',
+    /\b(\d+)\s*m²(?!\w)/i,
+    (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} metros quadrados`
+  );
+  text = runRule(
+    text,
+    'ptbr.measure.unit.v1',
+    'measure',
+    /\b(\d+)\s*(?:°C|ºC)(?!\w)/i,
+    (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} graus celsius`
+  );
+  text = runRule(
+    text,
+    'ptbr.measure.unit.v1',
+    'measure',
+    /\b(\d+),(\d+)\s*%/i,
+    (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} vírgula ${numberToWordsPtBr(parseInt(m[2], 10))} por cento`
+  );
+  text = runRule(
+    text,
+    'ptbr.measure.unit.v1',
+    'measure',
+    /\b(\d+)\s*%/i,
+    (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} por cento`
+  );
+  text = runRule(
+    text,
+    'ptbr.measure.unit.v1',
+    'measure',
+    /\b(\d+)\s*kg\b/i,
+    (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} quilos`
+  );
+  text = runRule(
+    text,
+    'ptbr.measure.unit.v1',
+    'measure',
+    /\b(\d+)\s*km\b/i,
+    (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} quilômetros`
+  );
+
+  // 10. UFs brasileiras em contexto geográfico (TTS-Utils)
+  text = runRule(
+    text,
+    'ptbr.geo.uf.v1',
+    'geo',
+    /([A-ZÀ-Úa-zà-ú\d]+)\s*[\/-]\s*([A-Z]{2})\b/,
+    (m) => {
+      const prefix = m[1];
+      const uf = m[2];
+      if (ESTADOS_BRASILEIROS[uf]) {
+        return `${prefix}, ${ESTADOS_BRASILEIROS[uf]}`;
+      }
+      return m[0];
+    }
+  );
+
+  text = runRule(
+    text,
+    'ptbr.geo.uf.v1',
+    'geo',
+    /\b(em|no|na|de|do|da|para)\s+([A-Z]{2})\b/,
+    (m) => {
+      const prep = m[1];
+      const uf = m[2];
+      if (ESTADOS_BRASILEIROS[uf]) {
+        return `${prep} ${ESTADOS_BRASILEIROS[uf]}`;
+      }
+      return m[0];
+    }
+  );
+
+  // 11. Endereços urbanos (TTS-Utils)
+  text = runRule(text, 'ptbr.address.logradouro.v1', 'address', /\bAv\.\s+/gi, () => 'Avenida ');
+  text = runRule(text, 'ptbr.address.logradouro.v1', 'address', /\bRod\.\s+/gi, () => 'Rodovia ');
+  text = runRule(text, 'ptbr.address.logradouro.v1', 'address', /\bAl\.\s+/gi, () => 'Alameda ');
+  text = runRule(text, 'ptbr.address.logradouro.v1', 'address', /\bTrav\.\s+/gi, () => 'Travessa ');
+  text = runRule(
+    text,
+    'ptbr.address.logradouro.v1',
+    'address',
+    /\b(?:no\.|nº|Nº)\s*(\d+)/gi,
+    (m) => `número ${m[1]}`
+  );
+
+  // 12. Artigos de Lei (Art. 1º até Art. 10º -> Artigo ordinal, 11+ -> cardinal)
   text = runRule(
     text,
     'ptbr.legal.artigo.v1',
@@ -311,11 +502,21 @@ export function sanitizeWithProvenance(
     () => 'Dom Pedro primeiro'
   );
 
-  // Abreviações de tratamento (Dr., Dra., Prof., Profa.)
+  // Abreviações de tratamento (Dr., Dra., Prof., Profa., Srª)
   text = runRule(text, 'ptbr.lexicon.abbrev.v1', 'abbreviation', /\bDr\.\s+/, () => 'Doutor ');
   text = runRule(text, 'ptbr.lexicon.abbrev.v1', 'abbreviation', /\bDra\.\s+/, () => 'Doutora ');
   text = runRule(text, 'ptbr.lexicon.abbrev.v1', 'abbreviation', /\bProf\.\s+/, () => 'Professor ');
-  text = runRule(text, 'ptbr.lexicon.abbrev.v1', 'abbreviation', /\bProfa\.\s+/, () => 'Professora ');
+  text = runRule(text, 'ptbr.lexicon.abbrev.v1', 'abbreviation', /\b(?:Profa\.|Profª)\s+/g, () => 'Professora ');
+  text = runRule(text, 'ptbr.lexicon.abbrev.v1', 'abbreviation', /\bSr\.\s+/, () => 'Senhor ');
+  text = runRule(text, 'ptbr.lexicon.abbrev.v1', 'abbreviation', /\b(?:Sra\.|Srª)\s+/g, () => 'Senhora ');
+
+  // Latinismos e expressões cronológicas
+  text = runRule(text, 'ptbr.lexicon.latin.v1', 'abbreviation', /\ba\.C\.(?!\w)/gi, () => 'antes de Cristo');
+  text = runRule(text, 'ptbr.lexicon.latin.v1', 'abbreviation', /\bd\.C\.(?!\w)/gi, () => 'depois de Cristo');
+  text = runRule(text, 'ptbr.lexicon.latin.v1', 'abbreviation', /\betc\.(?!\w)/gi, () => 'êti cétera');
+  text = runRule(text, 'ptbr.lexicon.latin.v1', 'abbreviation', /\be\.g\.(?!\w)/gi, () => 'por exemplo');
+  text = runRule(text, 'ptbr.lexicon.latin.v1', 'abbreviation', /\bi\.e\.(?!\w)/gi, () => 'isto é');
+  text = runRule(text, 'ptbr.lexicon.latin.v1', 'abbreviation', /\bvs\.(?!\w)/gi, () => 'versus');
 
   // Abreviações bibliográficas
   text = runRule(
@@ -333,20 +534,13 @@ export function sanitizeWithProvenance(
     (m) => `capítulo ${m[1]}`
   );
 
-  // Moedas (R$ 10,50 -> 10 reais e 50 centavos; R$ 100 -> 100 reais)
+  // Decimais avulsos (ex: 2,5 -> dois vírgula cinco)
   text = runRule(
     text,
-    'ptbr.currency.brl.v1',
-    'currency',
-    /R\$\s*(\d+),(\d{2})/,
-    (m) => `${m[1]} reais e ${m[2]} centavos`
-  );
-  text = runRule(
-    text,
-    'ptbr.currency.brl.v1',
-    'currency',
-    /R\$\s*(\d+)/,
-    (m) => `${m[1]} reais`
+    'ptbr.decimal.v1',
+    'decimal',
+    /\b(\d+),(\d+)\b/,
+    (m) => `${numberToWordsPtBr(parseInt(m[1], 10))} vírgula ${numberToWordsPtBr(parseInt(m[2], 10))}`
   );
 
   return {
