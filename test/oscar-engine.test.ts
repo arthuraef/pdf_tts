@@ -768,7 +768,7 @@ test('Goldset: executes full NeMo and TTS-Utils benchmark with 100% accuracy and
 // ---------------------------------------------------------------------------
 // 9. VoiceStudio Enhancer Tests
 // ---------------------------------------------------------------------------
-import { VOICESTUDIO_PRESETS } from '../src/oscar-engine/types.ts';
+import { VOICESTUDIO_PRESETS, VOICESTUDIO_MODELS } from '../src/oscar-engine/types.ts';
 
 test('VoiceStudio: Presets are correctly defined with acoustic sweet-spots', () => {
   const warm = VOICESTUDIO_PRESETS.warm_audiobook;
@@ -814,5 +814,74 @@ test('VoiceStudio: OscarEngine manages VoiceStudioConfig state and live preview 
   assert.doesNotThrow(() => {
     engine.previewVoiceStudio('Teste de voz em estúdio');
   });
+});
+
+test('VoiceStudio: Model definitions exist with Google Brasil as default and VoiceStudio models with acoustic support', () => {
+  assert.equal(VOICESTUDIO_MODELS.length, 5);
+
+  const google = VOICESTUDIO_MODELS.find((m) => m.id === 'google_brasil');
+  assert.ok(google);
+  assert.equal(google.engine, 'system');
+  assert.equal(google.supportsAcousticControls, false);
+
+  const cosy = VOICESTUDIO_MODELS.find((m) => m.id === 'voicestudio_cosyvoice');
+  assert.ok(cosy);
+  assert.equal(cosy.engine, 'voicestudio');
+  assert.equal(cosy.supportsAcousticControls, true);
+  assert.equal(cosy.defaultPreset, 'warm_audiobook');
+
+  const f5tts = VOICESTUDIO_MODELS.find((m) => m.id === 'voicestudio_f5tts');
+  assert.ok(f5tts);
+  assert.equal(f5tts.engine, 'voicestudio');
+  assert.equal(f5tts.supportsAcousticControls, true);
+
+  const chattts = VOICESTUDIO_MODELS.find((m) => m.id === 'voicestudio_chattts');
+  assert.ok(chattts);
+  assert.equal(chattts.engine, 'voicestudio');
+  assert.equal(chattts.supportsAcousticControls, true);
+
+  const chatterbox = VOICESTUDIO_MODELS.find((m) => m.id === 'voicestudio_chatterbox');
+  assert.ok(chatterbox);
+  assert.equal(chatterbox.engine, 'voicestudio');
+  assert.equal(chatterbox.supportsAcousticControls, true);
+});
+
+test('VoiceStudio: Switching models updates OscarEngine model state and default acoustic presets', () => {
+  const engine = new OscarEngine();
+  assert.equal(engine.getSelectedModelId(), 'google_brasil');
+
+  engine.setSelectedModelId('voicestudio_cosyvoice');
+  assert.equal(engine.getSelectedModelId(), 'voicestudio_cosyvoice');
+  const cosyCfg = engine.getVoiceStudioConfig();
+  assert.equal(cosyCfg.preset, 'warm_audiobook');
+  assert.equal(cosyCfg.pitchShift, -0.04);
+  assert.equal(cosyCfg.pacingMultiplier, 1.05);
+
+  engine.setSelectedModelId('voicestudio_f5tts');
+  assert.equal(engine.getSelectedModelId(), 'voicestudio_f5tts');
+  const f5Cfg = engine.getVoiceStudioConfig();
+  assert.equal(f5Cfg.preset, 'broadcast_hd');
+  assert.equal(f5Cfg.pitchShift, 0.0);
+  assert.equal(f5Cfg.pacingMultiplier, 0.9);
+});
+
+test('VoiceStudio: previewVoiceStudio applies ptBrLexicon Sanitizer to preview text', () => {
+  const engine = new OscarEngine();
+  // Ensure that text with UFs, currency, glued numbers and hours doesn't throw and runs cleanly through sanitizer
+  assert.doesNotThrow(() => {
+    engine.previewVoiceStudio('Processo no TJSP às 14:30 com valor de R$ 1.500,00 e 50kg.');
+  });
+});
+
+test('OscarEngine: setBasePlaybackRate maintains continuity and smoothly adjusts speed', () => {
+  const engine = new OscarEngine();
+  engine.loadDocument(1, ['O Tribunal de Justiça de São Paulo proferiu decisão histórica ontem.']);
+  
+  assert.equal(engine.getConfig().basePlaybackRate, 1.0);
+  engine.setBasePlaybackRate(1.5);
+  assert.equal(engine.getConfig().basePlaybackRate, 1.5);
+
+  // When stopped, index remains 0
+  assert.equal(engine.getCurrentIndex(), 0);
 });
 

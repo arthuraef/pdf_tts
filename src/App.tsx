@@ -314,6 +314,11 @@ export function App() {
               onVoiceStyleChange={oscar.setVoiceStyle}
               onHighlightCurrent={oscar.highlightCurrent}
               onOpenVoiceStudio={() => setIsVoiceStudioOpen(true)}
+              selectedModelLabel={
+                oscar.activeVoiceModel
+                  ? `${oscar.activeVoiceModel.emoji} ${oscar.activeVoiceModel.label.split('(')[0].trim()}`
+                  : 'Google Brasil HD'
+              }
               disabled={oscar.totalChunks === 0}
             />
           </div>
@@ -373,6 +378,8 @@ export function App() {
           oscar.availableVoices.find((v) => v.id === oscar.selectedVoiceId)?.label ||
           'Google Brasil (Online)'
         }
+        selectedModelId={oscar.selectedModelId}
+        onSelectModel={oscar.setModel}
       />
 
       {/* Footer */}

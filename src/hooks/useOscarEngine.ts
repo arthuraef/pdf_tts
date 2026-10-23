@@ -7,8 +7,9 @@ import type {
   VoiceStyleDefinition,
   VoiceStudioEnhancerConfig,
   VoiceStudioPresetId,
+  VoiceStudioModelId,
 } from '../oscar-engine/types';
-import { VOICESTUDIO_PRESETS } from '../oscar-engine/types';
+import { VOICESTUDIO_PRESETS, VOICESTUDIO_MODELS } from '../oscar-engine/types';
 import { savePlaybackProgress, getPlaybackProgress, saveHighlight } from '../storage/db';
 import type { StoredDocument, VoiceOption } from '../types';
 
@@ -31,6 +32,23 @@ export function useOscarEngine(document: StoredDocument | null) {
   const [voiceStyle, setVoiceStyleState] = useState<VoiceStyle>('classic');
   const [availableVoices, setAvailableVoices] = useState<VoiceOption[]>([]);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>('');
+
+  // 🎙️ Seletor de Modelo de Voz (Google Brasil HD como padrão + Modelos VoiceStudio)
+  const [selectedModelId, setSelectedModelIdState] = useState<VoiceStudioModelId>(() => {
+    try {
+      const saved = localStorage.getItem('pdf_voice_selected_model');
+      if (saved && VOICESTUDIO_MODELS.some((m) => m.id === saved)) {
+        return saved as VoiceStudioModelId;
+      }
+    } catch {
+      // ignore
+    }
+    return 'google_brasil';
+  });
+
+  const activeVoiceModel =
+    VOICESTUDIO_MODELS.find((m) => m.id === selectedModelId) || VOICESTUDIO_MODELS[0];
+  const isCurrentVoiceVoiceStudio = selectedModelId.startsWith('voicestudio_');
 
   // 🎛️ VoiceStudio Audio Enhancer (Configuração de Áudio para voz Google Brasil HD)
   const [voiceStudioConfig, setVoiceStudioConfigState] = useState<VoiceStudioEnhancerConfig>(() => {
@@ -119,6 +137,7 @@ export function useOscarEngine(document: StoredDocument | null) {
         breathInjectionEnabled: breathEnabled,
         basePlaybackRate: rate,
         voiceStyle,
+        selectedModelId,
       }
     );
 
@@ -396,9 +415,56 @@ export function useOscarEngine(document: StoredDocument | null) {
     });
   }, []);
 
-  const handlePreviewVoiceStudio = useCallback((sampleText?: string) => {
-    engineRef.current?.previewVoiceStudio(sampleText, selectedVoiceId, voiceStudioConfig);
-  }, [selectedVoiceId, voiceStudioConfig]);
+  const handleModelChange = useCallback((modelId: VoiceStudioModelId) => {
+    setSelectedModelIdState(modelId);
+    try {
+      localStorage.setItem('pdf_voice_selected_model', modelId);
+    } catch {
+      // ignore
+    }
+    engineRef.current?.setSelectedModelId(modelId);
+
+    const modelDef = VOICESTUDIO_MODELS.find((m) => m.id === modelId);
+    if (modelDef?.engine === 'voicestudio' && modelDef.defaultPreset) {
+      const presetDef = VOICESTUDIO_PRESETS[modelDef.defaultPreset];
+      if (presetDef) {
+        setVoiceStudioConfigState((prev) => {
+          const updated: VoiceStudioEnhancerConfig = {
+            ...prev,
+            enabled: true,
+            preset: modelDef.defaultPreset!,
+            ...presetDef.config,
+            pitchShift:
+              typeof modelDef.defaultPitchShift === 'number'
+                ? modelDef.defaultPitchShift
+                : presetDef.config.pitchShift,
+            pacingMultiplier:
+              typeof modelDef.defaultPacing === 'number'
+                ? modelDef.defaultPacing
+                : presetDef.config.pacingMultiplier,
+          };
+          try {
+            localStorage.setItem('pdf_voice_voicestudio_enhancer', JSON.stringify(updated));
+          } catch {
+            // ignore
+          }
+          return updated;
+        });
+      }
+    }
+  }, []);
+
+  const handlePreviewVoiceStudio = useCallback(
+    (sampleText?: string) => {
+      engineRef.current?.previewVoiceStudio(
+        sampleText,
+        selectedVoiceId,
+        voiceStudioConfig,
+        selectedModelId
+      );
+    },
+    [selectedVoiceId, voiceStudioConfig, selectedModelId]
+  );
 
   return {
     isPlaying,
@@ -422,6 +488,11 @@ export function useOscarEngine(document: StoredDocument | null) {
     voiceStylesList,
     availableVoices,
     selectedVoiceId,
+    selectedModelId,
+    activeVoiceModel,
+    isCurrentVoiceVoiceStudio,
+    setModel: handleModelChange,
+    availableVoiceModels: VOICESTUDIO_MODELS,
     voiceStudioConfig,
     setVoiceStudioConfig: handleVoiceStudioConfigChange,
     setVoiceStudioPreset: handleVoiceStudioPresetChange,

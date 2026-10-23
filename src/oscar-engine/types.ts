@@ -191,6 +191,7 @@ export interface EngineConfig {
   primaryVoice: string;   // Ex: 'pt-BR-FranciscaNeural' ou voiceURI
   secondaryVoice: string; // Ex: 'pt-BR-AntonioNeural' ou voiceURI
   voiceStudio?: VoiceStudioEnhancerConfig;
+  selectedModelId?: VoiceStudioModelId;
 }
 
 export type VoiceStudioPresetId =
@@ -268,3 +269,80 @@ export const VOICESTUDIO_PRESETS: Record<
     },
   },
 };
+
+// ---------------------------------------------------------------------------
+// 7. Modelos de Voz do Sistema e do VoiceStudio
+// ---------------------------------------------------------------------------
+export type VoiceStudioModelId =
+  | 'google_brasil'
+  | 'voicestudio_cosyvoice'
+  | 'voicestudio_f5tts'
+  | 'voicestudio_chattts'
+  | 'voicestudio_chatterbox';
+
+export interface VoiceModelDefinition {
+  id: string;
+  label: string;
+  engine: 'system' | 'voicestudio';
+  description: string;
+  emoji: string;
+  supportsAcousticControls: boolean;
+  defaultPreset?: VoiceStudioPresetId;
+  defaultPitchShift?: number;
+  defaultPacing?: number;
+}
+
+export const VOICESTUDIO_MODELS: VoiceModelDefinition[] = [
+  {
+    id: 'google_brasil',
+    label: 'Google Brasil HD (Online)',
+    engine: 'system',
+    description: 'Voz neural oficial do Google Chrome em pt-BR. Fidelidade estável padrão do navegador.',
+    emoji: '🌐',
+    supportsAcousticControls: false,
+  },
+  {
+    id: 'voicestudio_cosyvoice',
+    label: 'VoiceStudio • CosyVoice (Audiolivro Aveludado)',
+    engine: 'voicestudio',
+    description: 'Modelo neural de alta resolução para audiolivros, com graves quentes e prosódia humana.',
+    emoji: '🎙️',
+    supportsAcousticControls: true,
+    defaultPreset: 'warm_audiobook',
+    defaultPitchShift: -0.04,
+    defaultPacing: 1.05,
+  },
+  {
+    id: 'voicestudio_f5tts',
+    label: 'VoiceStudio • F5-TTS (Broadcast Podcast)',
+    engine: 'voicestudio',
+    description: 'Modelo de difusão com articulação rápida e projeção nítida para fones de ouvido.',
+    emoji: '📻',
+    supportsAcousticControls: true,
+    defaultPreset: 'broadcast_hd',
+    defaultPitchShift: 0.0,
+    defaultPacing: 0.9,
+  },
+  {
+    id: 'voicestudio_chattts',
+    label: 'VoiceStudio • ChatTTS (Conversacional Suave)',
+    engine: 'voicestudio',
+    description: 'Modelo expressivo para leitura noturna, ritmo compassado e pausas relaxantes.',
+    emoji: '🧘',
+    supportsAcousticControls: true,
+    defaultPreset: 'soft_intimate',
+    defaultPitchShift: -0.03,
+    defaultPacing: 1.2,
+  },
+  {
+    id: 'voicestudio_chatterbox',
+    label: 'VoiceStudio • ChatterBox (Técnico & Didático)',
+    engine: 'voicestudio',
+    description: 'Modelo analítico de alta precisão fonética para obras jurídicas e didáticas.',
+    emoji: '⚡',
+    supportsAcousticControls: true,
+    defaultPreset: 'crisp_fast',
+    defaultPitchShift: 0.02,
+    defaultPacing: 0.85,
+  },
+];

@@ -19,6 +19,7 @@ interface PlayerControlsProps {
   onVoiceStyleChange: (style: VoiceStyle) => void;
   onHighlightCurrent?: () => void;
   onOpenVoiceStudio?: () => void;
+  selectedModelLabel?: string;
   disabled?: boolean;
 }
 
@@ -39,6 +40,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   onVoiceStyleChange,
   onHighlightCurrent,
   onOpenVoiceStudio,
+  selectedModelLabel,
   disabled = false,
 }) => {
   // Amortecedor (Debounce de 200ms) para o slider de velocidade
@@ -112,14 +114,14 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
               type="button"
               onClick={onOpenVoiceStudio}
               className="text-[10px] text-indigo-400 hover:text-indigo-300 font-mono flex items-center gap-1 hover:underline cursor-pointer bg-indigo-500/10 hover:bg-indigo-500/20 px-2 py-0.5 rounded-full border border-indigo-500/20 transition"
-              title="Abrir VoiceStudio Enhancer (Aprimorar Voz)"
+              title="Abrir VoiceStudio • Trocar Modelo ou Ajustar Áudio"
             >
               <Sparkles className="w-3 h-3 text-indigo-400" />
-              <span>VoiceStudio • Google Brasil HD</span>
+              <span>{selectedModelLabel || 'Google Brasil HD'}</span>
             </button>
           ) : (
             <span className="text-[10px] text-indigo-400 font-mono">
-              Voz: Google Brasil HD
+              Voz: {selectedModelLabel || 'Google Brasil HD'}
             </span>
           )}
         </div>

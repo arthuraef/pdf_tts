@@ -9,9 +9,10 @@ import type {
   EngineStateEvents,
   VoiceStyle,
   VoiceStudioEnhancerConfig,
+  VoiceStudioModelId,
 } from './types';
-import { VOICESTUDIO_PRESETS } from './types';
-import { sanitizeDocumentPages } from './sanitizer';
+import { VOICESTUDIO_PRESETS, VOICESTUDIO_MODELS } from './types';
+import { sanitizeDocumentPages, applyPtBrLexicon } from './sanitizer';
 import { parseChunksToActingScores, VOICE_STYLES } from './director';
 import { PrefetchQueue, fallbackNativeTts } from './transport';
 import {
@@ -50,6 +51,10 @@ export class OscarEngine {
   private isPaused: boolean = false;
   private lastSpokenCharIndex: number = 0;
   private currentChunkCharOffset: number = 0;
+  private selectedModelId: VoiceStudioModelId = 'google_brasil';
+  private chunkStartedAt: number = 0;
+  private chunkPlaybackRate: number = 1.0;
+  private hasNativeBoundary: boolean = false;
   private prefetchQueue: PrefetchQueue;
   private voiceStudioConfig: VoiceStudioEnhancerConfig = {
     enabled: true,
@@ -63,6 +68,9 @@ export class OscarEngine {
       this.config = { ...this.config, ...config };
       if (config.voiceStudio) {
         this.voiceStudioConfig = { ...this.voiceStudioConfig, ...config.voiceStudio };
+      }
+      if (config.selectedModelId) {
+        this.selectedModelId = config.selectedModelId;
       }
     }
     this.prefetchQueue = new PrefetchQueue(webAudioStage.getAudioContext());
@@ -152,6 +160,29 @@ export class OscarEngine {
   public setSecondaryVoice(voiceURI: string): void {
     this.config.secondaryVoice = voiceURI;
     this.rebuildChunks();
+  }
+
+  public getSelectedModelId(): VoiceStudioModelId {
+    return this.selectedModelId;
+  }
+
+  public setSelectedModelId(modelId: VoiceStudioModelId): void {
+    this.selectedModelId = modelId;
+    const modelDef = VOICESTUDIO_MODELS.find((m) => m.id === modelId);
+    if (modelDef && modelDef.engine === 'voicestudio') {
+      if (modelDef.defaultPreset) {
+        this.voiceStudioConfig.preset = modelDef.defaultPreset;
+      }
+      if (typeof modelDef.defaultPitchShift === 'number') {
+        this.voiceStudioConfig.pitchShift = modelDef.defaultPitchShift;
+      }
+      if (typeof modelDef.defaultPacing === 'number') {
+        this.voiceStudioConfig.pacingMultiplier = modelDef.defaultPacing;
+      }
+    }
+    if (this.isPlaying && !this.isPaused) {
+      this.playCurrentChunk(this.lastSpokenCharIndex || 0);
+    }
   }
 
   public getCurrentIndex(): number {
@@ -259,12 +290,15 @@ export class OscarEngine {
       fallbackNativeTts.resume();
       this.isPaused = false;
       this.isPlaying = true;
+      this.chunkStartedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
       this.notifyState();
       return;
     }
 
     this.isPlaying = true;
     this.isPaused = false;
+    this.chunkStartedAt = 0;
+    this.hasNativeBoundary = false;
     this.lastSpokenCharIndex = 0;
     this.currentChunkCharOffset = 0;
     this.notifyState();
@@ -288,6 +322,8 @@ export class OscarEngine {
     fallbackNativeTts.stop();
     this.isPlaying = false;
     this.isPaused = false;
+    this.chunkStartedAt = 0;
+    this.hasNativeBoundary = false;
     this.lastSpokenCharIndex = 0;
     this.currentChunkCharOffset = 0;
     this.notifyState();
@@ -325,16 +361,45 @@ export class OscarEngine {
     this.config.basePlaybackRate = rate;
     if (this.isPlaying && !this.isPaused) {
       const chunk = this.scoreChunks[this.currentIndex];
-      // Se já estava falando a frase, retoma alinhado ao início da palavra atual
-      if (chunk && this.lastSpokenCharIndex > 0 && this.lastSpokenCharIndex < chunk.cleanText.length - 3) {
-        let wordStartIndex = this.lastSpokenCharIndex;
+      if (!chunk || !chunk.cleanText) return;
+
+      let currentCharPos = 0;
+      if (this.hasNativeBoundary && this.lastSpokenCharIndex > 0) {
+        currentCharPos = this.lastSpokenCharIndex;
+      } else if (this.chunkStartedAt > 0) {
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        const elapsedSec = Math.max(0, (now - this.chunkStartedAt) / 1000);
+        // Em português falado natural, a cadência média é de ~15.5 caracteres por segundo a 1.0x
+        const charsSpokenSinceStart = Math.floor(elapsedSec * 15.5 * (this.chunkPlaybackRate || 1.0));
+        currentCharPos = this.currentChunkCharOffset + charsSpokenSinceStart;
+      }
+
+      // Garante limites válidos dentro do chunk
+      currentCharPos = Math.max(0, Math.min(currentCharPos, chunk.cleanText.length - 1));
+
+      // Se já avançou no texto e não está no finalzinho (menos de 4 caracteres para o fim)
+      if (currentCharPos > 0 && currentCharPos < chunk.cleanText.length - 4) {
+        let wordStartIndex = currentCharPos;
+        // Recua até o início da palavra atual (caractere após espaço ou 0)
         while (wordStartIndex > 0 && !/\s/.test(chunk.cleanText[wordStartIndex - 1])) {
           wordStartIndex--;
         }
-        this.playCurrentChunk(wordStartIndex);
-      } else {
-        this.playCurrentChunk(0);
+        // Avança caso tenha parado em espaço em branco
+        while (wordStartIndex < chunk.cleanText.length && /\s/.test(chunk.cleanText[wordStartIndex])) {
+          wordStartIndex++;
+        }
+        if (wordStartIndex < chunk.cleanText.length - 3) {
+          this.playCurrentChunk(wordStartIndex);
+          return;
+        }
       }
+
+      // Se estiver muito próximo do fim, não reinicia do início
+      if (currentCharPos >= chunk.cleanText.length - 4) {
+        return;
+      }
+
+      this.playCurrentChunk(0);
     }
   }
 
@@ -354,14 +419,28 @@ export class OscarEngine {
     const chunk = this.scoreChunks[this.currentIndex];
     this.events.onChunkStart?.(chunk);
 
-    this.currentChunkCharOffset = charOffset;
-    const textToSpeak = charOffset > 0 ? chunk.cleanText.slice(charOffset).trim() : chunk.cleanText;
-    if (!textToSpeak) {
+    // Ajusta o offset pulando eventuais espaços em branco iniciais
+    let actualOffset = charOffset;
+    while (actualOffset < chunk.cleanText.length && /\s/.test(chunk.cleanText[actualOffset])) {
+      actualOffset++;
+    }
+
+    this.currentChunkCharOffset = actualOffset;
+    this.chunkStartedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.hasNativeBoundary = false;
+
+    const textToSpeak = actualOffset > 0 ? chunk.cleanText.slice(actualOffset) : chunk.cleanText;
+    if (!textToSpeak.trim()) {
       this.handleChunkFinished(100);
       return;
     }
 
-    // 1. Modulação de Pitch baseada no papel dramático, estilo e VoiceStudio Enhancer
+    // Identifica o modelo ativo e se suporta controles acústicos do VoiceStudio
+    const activeModel =
+      VOICESTUDIO_MODELS.find((m) => m.id === this.selectedModelId) || VOICESTUDIO_MODELS[0];
+    const supportsAcoustic = activeModel.supportsAcousticControls;
+
+    // 1. Modulação de Pitch baseada no papel dramático, estilo e VoiceStudio Enhancer (apenas modelos VoiceStudio)
     let pitchMultiplier = 1.0;
     if (this.config.spatialAudioEnabled && chunk.acoustics.pitchAdjust) {
       const match = chunk.acoustics.pitchAdjust.match(/([+-]?\d+)%/);
@@ -370,7 +449,9 @@ export class OscarEngine {
       }
     }
     const styleDef = VOICE_STYLES[this.config.voiceStyle] || VOICE_STYLES.classic;
-    const studioPitchShift = this.voiceStudioConfig.enabled ? this.voiceStudioConfig.pitchShift : 0.0;
+    const studioPitchShift = supportsAcoustic && this.voiceStudioConfig.enabled
+      ? this.voiceStudioConfig.pitchShift
+      : 0.0;
     const effectivePitch = parseFloat(
       Math.max(0.5, Math.min(2.0, pitchMultiplier * styleDef.pitchMultiplier * (1.0 + studioPitchShift))).toFixed(2)
     );
@@ -382,6 +463,7 @@ export class OscarEngine {
     const effectiveRate = parseFloat(
       (this.config.basePlaybackRate * bionicMultiplier * styleDef.rateMultiplier).toFixed(2)
     );
+    this.chunkPlaybackRate = effectiveRate;
 
     // 3. Escolhe a voz adequada para o papel (Teatro 3D alterna vozes em diálogos)
     const isCharacter = chunk.role === 'character_a' || chunk.role === 'character_b';
@@ -389,12 +471,13 @@ export class OscarEngine {
       ? this.config.secondaryVoice
       : this.config.primaryVoice;
 
-    // 4. Injeta micro-respiração humana orgânica (VoiceStudio / Oscar)
-    const breathActive =
-      (this.config.breathInjectionEnabled && styleDef.breathEnabled) ||
-      (this.voiceStudioConfig.enabled && this.voiceStudioConfig.breathInjection);
+    // 4. Injeta micro-respiração humana orgânica (disponível em modelos VoiceStudio)
+    const breathActive = supportsAcoustic
+      ? (this.voiceStudioConfig.enabled && this.voiceStudioConfig.breathInjection) ||
+        (this.config.breathInjectionEnabled && styleDef.breathEnabled)
+      : (this.config.breathInjectionEnabled && styleDef.breathEnabled);
 
-    if (breathActive && charOffset === 0 && chunk.acoustics.injectBreathBefore) {
+    if (breathActive && actualOffset === 0 && chunk.acoustics.injectBreathBefore) {
       try {
         const ctx = webAudioStage.getAudioContext();
         if (ctx.state === 'running') {
@@ -405,7 +488,9 @@ export class OscarEngine {
       }
     }
 
-    const studioPacing = this.voiceStudioConfig.enabled ? this.voiceStudioConfig.pacingMultiplier : 1.0;
+    const studioPacing = supportsAcoustic && this.voiceStudioConfig.enabled
+      ? this.voiceStudioConfig.pacingMultiplier
+      : 1.0;
     const effectivePause = Math.round(
       (chunk.acoustics.pauseAfterMs || 300) * styleDef.pauseMsMultiplier * studioPacing
     );
@@ -420,17 +505,22 @@ export class OscarEngine {
         this.events.onNetworkFallback?.(false);
       },
       onEnd: () => {
+        this.chunkStartedAt = 0;
+        this.hasNativeBoundary = false;
         this.lastSpokenCharIndex = 0;
         this.currentChunkCharOffset = 0;
         this.handleChunkFinished(effectivePause);
       },
       onError: (err) => {
         console.warn('Erro na síntese neural:', err);
+        this.chunkStartedAt = 0;
+        this.hasNativeBoundary = false;
         this.lastSpokenCharIndex = 0;
         this.currentChunkCharOffset = 0;
         this.handleChunkFinished(200);
       },
       onWordBoundary: (subCharIndex, charLength) => {
+        this.hasNativeBoundary = true;
         this.lastSpokenCharIndex = this.currentChunkCharOffset + subCharIndex;
         this.events.onWordBoundary?.(this.lastSpokenCharIndex, charLength);
       },
@@ -456,15 +546,23 @@ export class OscarEngine {
   public previewVoiceStudio(
     sampleText: string = 'O tribunal julgou procedente o recurso, garantindo a ampla defesa e a segurança jurídica.',
     voiceURI?: string,
-    customConfig?: Partial<VoiceStudioEnhancerConfig>
+    customConfig?: Partial<VoiceStudioEnhancerConfig>,
+    modelId?: VoiceStudioModelId
   ): void {
+    const activeModelId = modelId || this.selectedModelId;
+    const activeModel =
+      VOICESTUDIO_MODELS.find((m) => m.id === activeModelId) || VOICESTUDIO_MODELS[0];
     const cfg = { ...this.voiceStudioConfig, ...customConfig };
+
+    // Sanitiza obrigatoriamente a amostra pelo Sanitizer PT-BR
+    const sanitizedSample = applyPtBrLexicon(sampleText);
+
     const targetVoice = voiceURI || this.config.primaryVoice;
     const styleDef = VOICE_STYLES[this.config.voiceStyle] || VOICE_STYLES.classic;
-    const pitchShift = cfg.enabled ? cfg.pitchShift : 0.0;
+    const pitchShift = activeModel.supportsAcousticControls && cfg.enabled ? cfg.pitchShift : 0.0;
     const pitch = parseFloat((styleDef.pitchMultiplier * (1.0 + pitchShift)).toFixed(2));
     const rate = parseFloat((this.config.basePlaybackRate * styleDef.rateMultiplier).toFixed(2));
-    fallbackNativeTts.preview(sampleText, targetVoice, rate, pitch);
+    fallbackNativeTts.preview(sanitizedSample, targetVoice, rate, pitch);
   }
 
   private handleChunkFinished(pauseMs: number = 300): void {
