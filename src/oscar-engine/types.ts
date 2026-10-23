@@ -190,4 +190,81 @@ export interface EngineConfig {
   voiceStyle: VoiceStyle;
   primaryVoice: string;   // Ex: 'pt-BR-FranciscaNeural' ou voiceURI
   secondaryVoice: string; // Ex: 'pt-BR-AntonioNeural' ou voiceURI
+  voiceStudio?: VoiceStudioEnhancerConfig;
 }
+
+export type VoiceStudioPresetId =
+  | 'warm_audiobook'
+  | 'broadcast_hd'
+  | 'soft_intimate'
+  | 'crisp_fast'
+  | 'custom';
+
+export interface VoiceStudioEnhancerConfig {
+  enabled: boolean;
+  preset: VoiceStudioPresetId;
+  pitchShift: number; // -0.10 a +0.10 (ex: -0.03 = voz 3% mais encorpada e aveludada)
+  pacingMultiplier: number; // 0.7x a 1.4x (calibração do cronograma determinístico de pausas)
+  breathInjection: boolean; // Injeção de micro-respirações orgânicas humanas
+}
+
+export const VOICESTUDIO_PRESETS: Record<
+  VoiceStudioPresetId,
+  {
+    label: string;
+    emoji: string;
+    description: string;
+    config: Omit<VoiceStudioEnhancerConfig, 'enabled' | 'preset'>;
+  }
+> = {
+  warm_audiobook: {
+    label: 'Audiolivro Aveludado',
+    emoji: '🎙️',
+    description: 'Voz encorpada e aveludada, eliminando o tom metálico de robô. Perfeito para a voz Google Brasil HD.',
+    config: {
+      pitchShift: -0.03,
+      pacingMultiplier: 1.05,
+      breathInjection: true,
+    },
+  },
+  broadcast_hd: {
+    label: 'Podcast Broadcast FM',
+    emoji: '📻',
+    description: 'Voz projetada com máxima inteligibilidade de consoantes, excelente para fones de ouvido.',
+    config: {
+      pitchShift: 0.0,
+      pacingMultiplier: 0.9,
+      breathInjection: false,
+    },
+  },
+  soft_intimate: {
+    label: 'Leitura Noturna & Suave',
+    emoji: '🧘',
+    description: 'Ritmo compassado, pausas estendidas e pitch aveludado, ideal para concentração e relaxamento.',
+    config: {
+      pitchShift: -0.04,
+      pacingMultiplier: 1.2,
+      breathInjection: true,
+    },
+  },
+  crisp_fast: {
+    label: 'Articulação Rápida (1.5x+)',
+    emoji: '⚡',
+    description: 'Otimizado para quem ouve em alta velocidade sem perder a clareza e dicção das sílabas.',
+    config: {
+      pitchShift: 0.02,
+      pacingMultiplier: 0.75,
+      breathInjection: false,
+    },
+  },
+  custom: {
+    label: 'Personalizado',
+    emoji: '🎛️',
+    description: 'Ajuste fino manual de tom, cadência e respirações segundo o seu gosto auditivo.',
+    config: {
+      pitchShift: -0.03,
+      pacingMultiplier: 1.0,
+      breathInjection: false,
+    },
+  },
+};

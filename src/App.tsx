@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Headphones, ArrowLeft, Trash2, Smartphone, BookOpen, Star } from 'lucide-react';
+import { Headphones, ArrowLeft, Trash2, Smartphone, BookOpen, Star, Sliders } from 'lucide-react';
 import { BookshelfView } from './components/BookshelfView';
 import { BookCover } from './components/BookCover';
 import { PlayerControls } from './components/PlayerControls';
@@ -8,6 +8,7 @@ import { PWAInstallPrompt } from './components/PWAInstallPrompt';
 import { PocketModeModal } from './components/PocketModeModal';
 import { ChapterDrawer } from './components/ChapterDrawer';
 import { HighlightsModal } from './components/HighlightsModal';
+import { VoiceStudioModal } from './components/VoiceStudioModal';
 import { useOscarEngine } from './hooks/useOscarEngine';
 import { useMediaSession } from './hooks/useMediaSession';
 import {
@@ -29,6 +30,7 @@ export function App() {
   const [isPocketModeOpen, setIsPocketModeOpen] = useState(false);
   const [isChaptersOpen, setIsChaptersOpen] = useState(false);
   const [isHighlightsOpen, setIsHighlightsOpen] = useState(false);
+  const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState(false);
 
   // Recarrega lista completa de documentos com progresso
   const loadDocuments = useCallback(async () => {
@@ -232,6 +234,15 @@ export function App() {
 
                 <button
                   type="button"
+                  onClick={() => setIsVoiceStudioOpen(true)}
+                  className="p-2 rounded-xl text-indigo-400 hover:text-indigo-300 hover:bg-slate-800 transition cursor-pointer"
+                  title="VoiceStudio • Aprimorador de Voz HD"
+                >
+                  <Sliders className="w-4 h-4" />
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => setIsPocketModeOpen(true)}
                   className="p-2 rounded-xl text-indigo-400 hover:text-indigo-300 hover:bg-slate-800 transition cursor-pointer"
                   title="Modo Bolso (AMOLED)"
@@ -302,6 +313,7 @@ export function App() {
               voiceStylesList={oscar.voiceStylesList}
               onVoiceStyleChange={oscar.setVoiceStyle}
               onHighlightCurrent={oscar.highlightCurrent}
+              onOpenVoiceStudio={() => setIsVoiceStudioOpen(true)}
               disabled={oscar.totalChunks === 0}
             />
           </div>
@@ -347,6 +359,20 @@ export function App() {
         onClose={() => setIsHighlightsOpen(false)}
         docId={activeDoc?.id}
         onJumpToPage={oscar.goToPage}
+      />
+
+      {/* VoiceStudio Enhancer Modal */}
+      <VoiceStudioModal
+        isOpen={isVoiceStudioOpen}
+        onClose={() => setIsVoiceStudioOpen(false)}
+        config={oscar.voiceStudioConfig}
+        onChangeConfig={oscar.setVoiceStudioConfig}
+        onSelectPreset={oscar.setVoiceStudioPreset}
+        onPreview={oscar.previewVoiceStudio}
+        selectedVoiceName={
+          oscar.availableVoices.find((v) => v.id === oscar.selectedVoiceId)?.label ||
+          'Google Brasil (Online)'
+        }
       />
 
       {/* Footer */}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, RotateCcw, ChevronLeft, ChevronRight, Gauge, Star } from 'lucide-react';
+import { Play, Pause, RotateCcw, ChevronLeft, ChevronRight, Gauge, Star, Sparkles } from 'lucide-react';
 import type { VoiceStyle, VoiceStyleDefinition } from '../oscar-engine/types';
 
 interface PlayerControlsProps {
@@ -18,6 +18,7 @@ interface PlayerControlsProps {
   voiceStylesList: VoiceStyleDefinition[];
   onVoiceStyleChange: (style: VoiceStyle) => void;
   onHighlightCurrent?: () => void;
+  onOpenVoiceStudio?: () => void;
   disabled?: boolean;
 }
 
@@ -37,6 +38,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   voiceStylesList,
   onVoiceStyleChange,
   onHighlightCurrent,
+  onOpenVoiceStudio,
   disabled = false,
 }) => {
   // Amortecedor (Debounce de 200ms) para o slider de velocidade
@@ -105,9 +107,21 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
           <span className="text-[11px] font-mono uppercase tracking-wider text-slate-400 font-semibold">
             Estilo de Narração
           </span>
-          <span className="text-[10px] text-indigo-400 font-mono">
-            Voz: Google Brasil HD
-          </span>
+          {onOpenVoiceStudio ? (
+            <button
+              type="button"
+              onClick={onOpenVoiceStudio}
+              className="text-[10px] text-indigo-400 hover:text-indigo-300 font-mono flex items-center gap-1 hover:underline cursor-pointer bg-indigo-500/10 hover:bg-indigo-500/20 px-2 py-0.5 rounded-full border border-indigo-500/20 transition"
+              title="Abrir VoiceStudio Enhancer (Aprimorar Voz)"
+            >
+              <Sparkles className="w-3 h-3 text-indigo-400" />
+              <span>VoiceStudio • Google Brasil HD</span>
+            </button>
+          ) : (
+            <span className="text-[10px] text-indigo-400 font-mono">
+              Voz: Google Brasil HD
+            </span>
+          )}
         </div>
 
         <div className="grid grid-cols-3 gap-2 bg-slate-950/80 p-1.5 rounded-2xl border border-slate-800">

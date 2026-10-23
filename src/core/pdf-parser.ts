@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PDFPageContent, ChapterOutlineItem } from '../types';
+import { dehyphenate } from '../oscar-engine/sanitizer/dehyphenator';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -51,12 +52,21 @@ export async function extractTextFromPDF(
       if ('str' in item && typeof item.str === 'string') {
         const text = item.str.trim();
         if (text) {
+          // Se o item anterior terminou com hífen ("deso -", "deso-") e o próximo é a continuação:
+          if (strings.length > 0) {
+            const last = strings[strings.length - 1];
+            if (/[-–—\u00AD\u2010\u2011\u2012\u2212]$/.test(last) && /^[a-zà-ú]/i.test(text)) {
+              strings[strings.length - 1] = last.replace(/\s*[-–—\u00AD\u2010\u2011\u2012\u2212]$/, '') + text;
+              continue;
+            }
+          }
           strings.push(text);
         }
       }
     }
 
-    const pageText = strings.join(' ').replace(/\s+/g, ' ').trim();
+    const rawJoined = strings.join(' ').replace(/\s+/g, ' ').trim();
+    const pageText = dehyphenate(rawJoined);
     totalCharacters += pageText.length;
 
     pages.push({

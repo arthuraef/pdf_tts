@@ -1,7 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { OscarEngine, webAudioStage } from '../oscar-engine';
 import { VOICE_STYLES } from '../oscar-engine/director/emotionalParser';
-import type { ActingScoreChunk, VoiceStyle, VoiceStyleDefinition } from '../oscar-engine/types';
+import type {
+  ActingScoreChunk,
+  VoiceStyle,
+  VoiceStyleDefinition,
+  VoiceStudioEnhancerConfig,
+  VoiceStudioPresetId,
+} from '../oscar-engine/types';
+import { VOICESTUDIO_PRESETS } from '../oscar-engine/types';
 import { savePlaybackProgress, getPlaybackProgress, saveHighlight } from '../storage/db';
 import type { StoredDocument, VoiceOption } from '../types';
 
@@ -24,6 +31,23 @@ export function useOscarEngine(document: StoredDocument | null) {
   const [voiceStyle, setVoiceStyleState] = useState<VoiceStyle>('classic');
   const [availableVoices, setAvailableVoices] = useState<VoiceOption[]>([]);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>('');
+
+  // 🎛️ VoiceStudio Audio Enhancer (Configuração de Áudio para voz Google Brasil HD)
+  const [voiceStudioConfig, setVoiceStudioConfigState] = useState<VoiceStudioEnhancerConfig>(() => {
+    try {
+      const saved = localStorage.getItem('pdf_voice_voicestudio_enhancer');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {
+      // ignore
+    }
+    return {
+      enabled: true,
+      preset: 'warm_audiobook',
+      ...VOICESTUDIO_PRESETS.warm_audiobook.config,
+    };
+  });
 
   const engineRef = useRef<OscarEngine | null>(null);
 
@@ -338,6 +362,44 @@ export function useOscarEngine(document: StoredDocument | null) {
     VOICE_STYLES.calm,
   ];
 
+  const handleVoiceStudioConfigChange = useCallback((patch: Partial<VoiceStudioEnhancerConfig>) => {
+    setVoiceStudioConfigState((prev) => {
+      const updated = { ...prev, ...patch };
+      try {
+        localStorage.setItem('pdf_voice_voicestudio_enhancer', JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+      engineRef.current?.setVoiceStudioConfig(updated);
+      return updated;
+    });
+  }, []);
+
+  const handleVoiceStudioPresetChange = useCallback((presetId: VoiceStudioPresetId) => {
+    const presetDef = VOICESTUDIO_PRESETS[presetId];
+    if (!presetDef) return;
+
+    setVoiceStudioConfigState((prev) => {
+      const updated: VoiceStudioEnhancerConfig = {
+        ...prev,
+        enabled: true,
+        preset: presetId,
+        ...presetDef.config,
+      };
+      try {
+        localStorage.setItem('pdf_voice_voicestudio_enhancer', JSON.stringify(updated));
+      } catch {
+        // ignore
+      }
+      engineRef.current?.setVoiceStudioConfig(updated);
+      return updated;
+    });
+  }, []);
+
+  const handlePreviewVoiceStudio = useCallback((sampleText?: string) => {
+    engineRef.current?.previewVoiceStudio(sampleText, selectedVoiceId, voiceStudioConfig);
+  }, [selectedVoiceId, voiceStudioConfig]);
+
   return {
     isPlaying,
     isPaused,
@@ -360,6 +422,10 @@ export function useOscarEngine(document: StoredDocument | null) {
     voiceStylesList,
     availableVoices,
     selectedVoiceId,
+    voiceStudioConfig,
+    setVoiceStudioConfig: handleVoiceStudioConfigChange,
+    setVoiceStudioPreset: handleVoiceStudioPresetChange,
+    previewVoiceStudio: handlePreviewVoiceStudio,
     setVoiceStyle: handleVoiceStyleChange,
     setVoice: handleVoiceChange,
     previewVoice: handlePreviewVoice,

@@ -3,7 +3,14 @@
  * Ponto de entrada único e independente de React/UI.
  */
 
-import type { ActingScoreChunk, EngineConfig, EngineStateEvents, VoiceStyle } from './types';
+import type {
+  ActingScoreChunk,
+  EngineConfig,
+  EngineStateEvents,
+  VoiceStyle,
+  VoiceStudioEnhancerConfig,
+} from './types';
+import { VOICESTUDIO_PRESETS } from './types';
 import { sanitizeDocumentPages } from './sanitizer';
 import { parseChunksToActingScores, VOICE_STYLES } from './director';
 import { PrefetchQueue, fallbackNativeTts } from './transport';
@@ -44,11 +51,19 @@ export class OscarEngine {
   private lastSpokenCharIndex: number = 0;
   private currentChunkCharOffset: number = 0;
   private prefetchQueue: PrefetchQueue;
+  private voiceStudioConfig: VoiceStudioEnhancerConfig = {
+    enabled: true,
+    preset: 'warm_audiobook',
+    ...VOICESTUDIO_PRESETS.warm_audiobook.config,
+  };
 
   constructor(events: EngineStateEvents = {}, config?: Partial<EngineConfig>) {
     this.events = events;
     if (config) {
       this.config = { ...this.config, ...config };
+      if (config.voiceStudio) {
+        this.voiceStudioConfig = { ...this.voiceStudioConfig, ...config.voiceStudio };
+      }
     }
     this.prefetchQueue = new PrefetchQueue(webAudioStage.getAudioContext());
 
@@ -346,7 +361,7 @@ export class OscarEngine {
       return;
     }
 
-    // 1. Modulação de Pitch baseada no papel dramático e estilo
+    // 1. Modulação de Pitch baseada no papel dramático, estilo e VoiceStudio Enhancer
     let pitchMultiplier = 1.0;
     if (this.config.spatialAudioEnabled && chunk.acoustics.pitchAdjust) {
       const match = chunk.acoustics.pitchAdjust.match(/([+-]?\d+)%/);
@@ -355,7 +370,10 @@ export class OscarEngine {
       }
     }
     const styleDef = VOICE_STYLES[this.config.voiceStyle] || VOICE_STYLES.classic;
-    const effectivePitch = parseFloat((pitchMultiplier * styleDef.pitchMultiplier).toFixed(2));
+    const studioPitchShift = this.voiceStudioConfig.enabled ? this.voiceStudioConfig.pitchShift : 0.0;
+    const effectivePitch = parseFloat(
+      Math.max(0.5, Math.min(2.0, pitchMultiplier * styleDef.pitchMultiplier * (1.0 + studioPitchShift))).toFixed(2)
+    );
 
     // 2. Calcula a velocidade efetiva com Bionic Pacing e Estilo de Voz
     const bionicMultiplier = this.config.bionicPacingEnabled
@@ -371,13 +389,12 @@ export class OscarEngine {
       ? this.config.secondaryVoice
       : this.config.primaryVoice;
 
-    // 4. Injeta micro-respiração humana apenas se explicitamente habilitado
-    if (
-      this.config.breathInjectionEnabled &&
-      charOffset === 0 &&
-      chunk.acoustics.injectBreathBefore &&
-      styleDef.breathEnabled
-    ) {
+    // 4. Injeta micro-respiração humana orgânica (VoiceStudio / Oscar)
+    const breathActive =
+      (this.config.breathInjectionEnabled && styleDef.breathEnabled) ||
+      (this.voiceStudioConfig.enabled && this.voiceStudioConfig.breathInjection);
+
+    if (breathActive && charOffset === 0 && chunk.acoustics.injectBreathBefore) {
       try {
         const ctx = webAudioStage.getAudioContext();
         if (ctx.state === 'running') {
@@ -388,8 +405,9 @@ export class OscarEngine {
       }
     }
 
+    const studioPacing = this.voiceStudioConfig.enabled ? this.voiceStudioConfig.pacingMultiplier : 1.0;
     const effectivePause = Math.round(
-      (chunk.acoustics.pauseAfterMs || 300) * styleDef.pauseMsMultiplier
+      (chunk.acoustics.pauseAfterMs || 300) * styleDef.pauseMsMultiplier * studioPacing
     );
 
     // 5. Síntese Neural Nativa com Suporte a Karaokê e Timbre Modulado
@@ -425,6 +443,28 @@ export class OscarEngine {
     const targetVoice = voiceURI || this.config.primaryVoice;
     const rate = parseFloat((this.config.basePlaybackRate * styleDef.rateMultiplier).toFixed(2));
     fallbackNativeTts.preview(text, targetVoice, rate, styleDef.pitchMultiplier);
+  }
+
+  public getVoiceStudioConfig(): VoiceStudioEnhancerConfig {
+    return { ...this.voiceStudioConfig };
+  }
+
+  public setVoiceStudioConfig(config: Partial<VoiceStudioEnhancerConfig>): void {
+    this.voiceStudioConfig = { ...this.voiceStudioConfig, ...config };
+  }
+
+  public previewVoiceStudio(
+    sampleText: string = 'O tribunal julgou procedente o recurso, garantindo a ampla defesa e a segurança jurídica.',
+    voiceURI?: string,
+    customConfig?: Partial<VoiceStudioEnhancerConfig>
+  ): void {
+    const cfg = { ...this.voiceStudioConfig, ...customConfig };
+    const targetVoice = voiceURI || this.config.primaryVoice;
+    const styleDef = VOICE_STYLES[this.config.voiceStyle] || VOICE_STYLES.classic;
+    const pitchShift = cfg.enabled ? cfg.pitchShift : 0.0;
+    const pitch = parseFloat((styleDef.pitchMultiplier * (1.0 + pitchShift)).toFixed(2));
+    const rate = parseFloat((this.config.basePlaybackRate * styleDef.rateMultiplier).toFixed(2));
+    fallbackNativeTts.preview(sampleText, targetVoice, rate, pitch);
   }
 
   private handleChunkFinished(pauseMs: number = 300): void {

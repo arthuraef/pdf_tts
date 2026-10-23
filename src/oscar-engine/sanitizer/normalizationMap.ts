@@ -200,13 +200,49 @@ export function sanitizeWithProvenance(
     }
   );
 
-  // 5. De-hifenização de quebras de linha
+  // 5. De-hifenização de quebras de linha e palavras partidas com espaços ("deso - lação" -> "desolação")
   text = runRule(
     text,
     'ptbr.layout.dehyphenate.v1',
     'ocr_repair',
-    /(?<=[a-zA-ZÀ-ÿ])-[\r\n\s]+(?=[a-zA-ZÀ-ÿ])/,
-    () => ''
+    /([a-zA-ZÀ-ÿ]+)\s*[-–—\u00AD\u2010\u2011\u2012\u2212]\s*[\r\n]+\s*([a-zA-ZÀ-ÿ]+)/,
+    (m) => `${m[1]}${m[2]}`
+  );
+
+  text = runRule(
+    text,
+    'ptbr.layout.dehyphenate.v1',
+    'ocr_repair',
+    /([a-zA-ZÀ-ÿ]{2,})\s*[-–—\u00AD\u2010\u2011\u2012\u2212]\s*([a-zA-ZÀ-ÿ]{2,})/,
+    (m) => {
+      const p1 = m[1];
+      const p2 = m[2];
+      const p2Lower = p2.toLowerCase();
+      const p1Lower = p1.toLowerCase();
+
+      const CLAUSE_CONNECTORS = new Set([
+        'que', 'mas', 'porém', 'contudo', 'todavia', 'e', 'ou', 'se', 'quando',
+        'onde', 'como', 'porque', 'porquanto', 'pois', 'já', 'ainda', 'não', 'sim',
+        'o', 'a', 'os', 'as', 'um', 'uma', 'uns', 'umas', 'este', 'esta', 'esse',
+        'essa', 'aquele', 'aquela', 'isto', 'isso', 'aquilo', 'de', 'em', 'para',
+        'por', 'com', 'sem', 'sob', 'sobre', 'após', 'desde', 'até', 'entre',
+        'disse', 'falou', 'respondeu', 'gritou', 'perguntou', 'afirmou', 'exclamou'
+      ]);
+
+      if (CLAUSE_CONNECTORS.has(p2Lower) || (p2[0] === p2[0].toUpperCase() && p2[0] !== p2Lower[0])) {
+        return m[0];
+      }
+
+      if (
+        /^(?:ção|ções|mento|mentos|dade|dades|mente|tucional|tucionais|tório|tórios|tória|tórias|tiva|tivas|tivo|tivos|gência|gências|cedente|cedentes|nizado|nizada|ficação|ficações|prudência|laç)/.test(p2Lower) ||
+        /^(?:deso|inconsti|estabele|transfe|juris|homologa|auto|admi|dispo|pará|sen|proce|recor|apre|deter|compa|signi|recon|obri|impor|inter|subor|neces|repre|traba|conhe|cons|gover|presi)$/i.test(p1Lower) ||
+        (p1.length <= 4 && p2.length <= 4)
+      ) {
+        return p1 + p2;
+      }
+
+      return m[0];
+    }
   );
 
   // 6. Moeda brasileira com separador de milhar e centavos (TTS-Utils)

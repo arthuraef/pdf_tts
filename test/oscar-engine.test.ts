@@ -18,6 +18,21 @@ test('TextSanitizer: De-hyphenation should join words broken by line-breaks', ()
   assert.equal(output, 'Este é um exemplo de texto quebrado em várias linhas.');
 });
 
+test('TextSanitizer: De-hyphenation should heal broken words with spaces around hyphens', () => {
+  // Caso real relatado pelo usuário com print do PDF: "deso - lação"
+  const input = 'esperança na deso - lação que surgiu no julga - mento da causa inconsti - tucional.';
+  const output = dehyphenate(input);
+  assert.equal(
+    output,
+    'esperança na desolação que surgiu no julgamento da causa inconstitucional.'
+  );
+
+  // Deve preservar travessões oracionais legítimos seguidos de conectivos
+  const clauseInput = 'O projeto - que foi aprovado ontem - seguiu para sanção.';
+  const clauseOutput = dehyphenate(clauseInput);
+  assert.equal(clauseOutput, 'O projeto - que foi aprovado ontem - seguiu para sanção.');
+});
+
 test('TextSanitizer: PT-BR Lexicon expansion', () => {
   const input = 'O Dr. Silva citou o Art. 5º no Século XXI.';
   const output = applyPtBrLexicon(input);
@@ -749,3 +764,55 @@ test('Goldset: executes full NeMo and TTS-Utils benchmark with 100% accuracy and
   assert.equal(report.meanCER, 0);
   assert.equal(report.meanWER, 0);
 });
+
+// ---------------------------------------------------------------------------
+// 9. VoiceStudio Enhancer Tests
+// ---------------------------------------------------------------------------
+import { VOICESTUDIO_PRESETS } from '../src/oscar-engine/types.ts';
+
+test('VoiceStudio: Presets are correctly defined with acoustic sweet-spots', () => {
+  const warm = VOICESTUDIO_PRESETS.warm_audiobook;
+  assert.ok(warm);
+  assert.equal(warm.config.pitchShift, -0.03);
+  assert.equal(warm.config.pacingMultiplier, 1.05);
+  assert.equal(warm.config.breathInjection, true);
+
+  const broadcast = VOICESTUDIO_PRESETS.broadcast_hd;
+  assert.ok(broadcast);
+  assert.equal(broadcast.config.pitchShift, 0.0);
+  assert.equal(broadcast.config.pacingMultiplier, 0.9);
+
+  const soft = VOICESTUDIO_PRESETS.soft_intimate;
+  assert.ok(soft);
+  assert.equal(soft.config.pitchShift, -0.04);
+  assert.equal(soft.config.pacingMultiplier, 1.2);
+
+  const crisp = VOICESTUDIO_PRESETS.crisp_fast;
+  assert.ok(crisp);
+  assert.equal(crisp.config.pitchShift, 0.02);
+  assert.equal(crisp.config.pacingMultiplier, 0.75);
+});
+
+test('VoiceStudio: OscarEngine manages VoiceStudioConfig state and live preview without error', () => {
+  const engine = new OscarEngine();
+  const initialConfig = engine.getVoiceStudioConfig();
+  assert.equal(initialConfig.preset, 'warm_audiobook');
+  assert.equal(initialConfig.enabled, true);
+
+  engine.setVoiceStudioConfig({
+    preset: 'broadcast_hd',
+    pitchShift: 0.0,
+    pacingMultiplier: 0.9,
+    breathInjection: false,
+  });
+
+  const updatedConfig = engine.getVoiceStudioConfig();
+  assert.equal(updatedConfig.preset, 'broadcast_hd');
+  assert.equal(updatedConfig.breathInjection, false);
+
+  // Preview should run safely even in Node / test environment (fallback mock)
+  assert.doesNotThrow(() => {
+    engine.previewVoiceStudio('Teste de voz em estúdio');
+  });
+});
+
